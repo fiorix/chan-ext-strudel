@@ -57,6 +57,8 @@ const DEFAULT_SETTINGS = {
   activeTab: "welcome",
 };
 const ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
+// Interval ids handed out by the worker timers, far above any native id.
+const WORKER_TIMER_BASE = 1_000_000_000;
 
 const el = (id) => document.getElementById(id);
 const ui = Object.fromEntries(
@@ -126,6 +128,74 @@ function paragraph(text, className) {
   node.textContent = text;
   if (className) node.className = className;
   return node;
+}
+
+// Worker-backed timers. Browsers throttle a hidden page's main-thread timers
+// to about one tick per second, which drags Strudel's scheduler; a dedicated
+// worker's timers are left alone, and strudel.cc runs on them too. The
+// scheduler's clock reads globalThis.setInterval when it is created, at
+// mount, so the swap has to happen before the editor exists.
+function installWorkerTimers() {
+  const source = [
+    "const timers = new Map();",
+    "self.onmessage = (event) => {",
+    "  const { op, id, delay } = event.data;",
+    "  if (op === 'set') timers.set(id, setInterval(() => self.postMessage(id), delay));",
+    "  else if (op === 'clear') { clearInterval(timers.get(id)); timers.delete(id); }",
+    "};",
+  ].join("\n");
+  const urls = [
+    () => URL.createObjectURL(new Blob([source], { type: "text/javascript" })),
+    () => `data:text/javascript;base64,${btoa(source)}`,
+  ];
+  let worker = null;
+  for (const url of urls) {
+    try {
+      worker = new Worker(url());
+      break;
+    } catch {
+      worker = null;
+    }
+  }
+  if (!worker) return false;
+  const nativeSet = globalThis.setInterval;
+  const nativeClear = globalThis.clearInterval;
+  const active = new Map();
+  let next = WORKER_TIMER_BASE;
+  let broken = false;
+  worker.onmessage = (event) => {
+    const entry = active.get(event.data);
+    if (entry && entry.native === undefined) entry.callback();
+  };
+  // A worker that fails after construction (a blocked URL reports through
+  // this event) hands every interval back to the native timer.
+  worker.onerror = () => {
+    if (broken) return;
+    broken = true;
+    for (const entry of active.values()) {
+      if (entry.native === undefined) entry.native = nativeSet(entry.callback, entry.delay);
+    }
+  };
+  globalThis.setInterval = (callback, delay = 0, ...args) => {
+    if (typeof callback !== "function") return nativeSet(callback, delay, ...args);
+    const id = next++;
+    const entry = { callback: () => callback(...args), delay: Math.max(0, Number(delay) || 0) };
+    active.set(id, entry);
+    if (broken) entry.native = nativeSet(entry.callback, entry.delay);
+    else worker.postMessage({ op: "set", id, delay: entry.delay });
+    return id;
+  };
+  globalThis.clearInterval = (id) => {
+    const entry = active.get(id);
+    if (!entry) {
+      nativeClear(id);
+      return;
+    }
+    active.delete(id);
+    if (entry.native !== undefined) nativeClear(entry.native);
+    else worker.postMessage({ op: "clear", id });
+  };
+  return true;
 }
 
 async function getJson(path) {
@@ -673,6 +743,8 @@ window.addEventListener(
   true,
 );
 // End of Chan's keyboard relay.
+
+installWorkerTimers();
 
 const api = {
   defaults: DEFAULT_SETTINGS,

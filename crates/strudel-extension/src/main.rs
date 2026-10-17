@@ -587,6 +587,22 @@ mod tests {
     }
 
     #[test]
+    fn page_runs_the_scheduler_on_worker_timers() {
+        // Strudel's clock captures globalThis.setInterval when the editor is
+        // created, so the worker-backed timers must be installed before the
+        // editor mounts, or a hidden tab throttles playback.
+        let install = APP_JS
+            .find("installWorkerTimers();")
+            .expect("the page installs worker timers");
+        let mount = APP_JS
+            .find("mountEditor(activePattern().code)")
+            .expect("the page mounts the editor");
+        assert!(install < mount);
+        assert!(APP_JS.contains("new Worker("));
+        assert!(APP_JS.contains("globalThis.setInterval ="));
+    }
+
+    #[test]
     fn embedded_files_match_the_pin_manifest() {
         let lock = parse_lock(STRUDEL_LOCK).unwrap();
         verify_file(&lock, "strudel-repl.js", STRUDEL_REPL_JS).unwrap();
