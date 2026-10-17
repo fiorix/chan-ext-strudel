@@ -1,0 +1,469 @@
+:root {
+  color-scheme: light dark;
+  --bg: #fff;
+  --fg: #20242b;
+  --muted: #606b7a;
+  --line: #dce1e8;
+  --field: #f5f7fa;
+  --accent: #235ed1;
+  --danger: #b12c37;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #17191e;
+    --fg: #e9edf3;
+    --muted: #a6afbf;
+    --line: #343944;
+    --field: #22262e;
+    --accent: #91b7ff;
+    --danger: #ff9ca7;
+  }
+}
+* {
+  box-sizing: border-box;
+}
+[hidden] {
+  display: none !important;
+}
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font:
+    15px/1.45 system-ui,
+    sans-serif;
+}
+button,
+input,
+select,
+summary {
+  font: inherit;
+  color: inherit;
+}
+button {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  padding: 5px 11px;
+  cursor: pointer;
+  min-height: 34px;
+}
+button:hover {
+  background: var(--field);
+}
+button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+button.active,
+button[aria-pressed="true"] {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+button:focus-visible,
+summary:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+input[type="search"],
+input[type="text"],
+input[type="number"],
+select {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--field);
+  padding: 7px 9px;
+  min-height: 34px;
+}
+input[type="range"] {
+  flex: 1;
+  min-width: 0;
+}
+input[type="checkbox"] {
+  margin-right: 6px;
+}
+label {
+  display: block;
+}
+h1,
+h2,
+h3,
+p,
+pre {
+  margin: 0;
+}
+h1 {
+  font-size: 16px;
+  font-weight: 650;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+h2 {
+  font-size: 15px;
+  font-weight: 650;
+  margin: 14px 0 6px;
+}
+h3 {
+  font-size: 14px;
+  font-weight: 650;
+  margin: 12px 0 4px;
+}
+code,
+pre {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 13px;
+}
+pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--field);
+  border-radius: 6px;
+  padding: 8px;
+}
+.muted {
+  color: var(--muted);
+  font-size: 13px;
+}
+#app {
+  height: 100%;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.header {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--line);
+  flex: none;
+  flex-wrap: wrap;
+}
+.heading {
+  flex: 1;
+  min-width: 120px;
+}
+#status {
+  font-size: 12px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+details {
+  position: relative;
+}
+summary {
+  display: flex;
+  width: 36px;
+  min-height: 34px;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  list-style: none;
+  font-size: 24px;
+}
+summary::-webkit-details-marker {
+  display: none;
+}
+.menu {
+  position: absolute;
+  right: 0;
+  z-index: 3;
+  padding: 10px 12px;
+  width: min(420px, calc(100vw - 24px));
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px #0002;
+}
+.about p {
+  font-size: 13px;
+  margin: 4px 0;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.notice {
+  padding: 9px 14px;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+  background: var(--field);
+  color: var(--danger);
+  border-bottom: 1px solid var(--line);
+  flex: none;
+}
+.popover {
+  position: absolute;
+  top: 56px;
+  right: 12px;
+  z-index: 4;
+  width: min(520px, calc(100vw - 24px));
+  padding: 12px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px #0003;
+}
+.popover input {
+  margin: 8px 0;
+}
+.popover .row {
+  justify-content: flex-end;
+}
+.body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  min-width: 0;
+}
+#app[data-panel="bottom"] .body {
+  flex-direction: column;
+}
+/* The component inserts the editor as its own next sibling, so the editor is
+   whichever child of the stage is not the custom element. */
+.stage {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+.stage > :not(strudel-editor) {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.stage .cm-editor {
+  height: 100%;
+}
+.panel {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  min-width: 0;
+  min-height: 0;
+  background: var(--field);
+}
+#app[data-panel="right"] .panel {
+  width: min(560px, 80vw);
+  border-left: 1px solid var(--line);
+}
+#app[data-panel="bottom"] .panel {
+  height: min(360px, 50vh);
+  border-top: 1px solid var(--line);
+}
+#app[data-panel-open="false"] .panel-bar,
+#app[data-panel-open="false"] .panel-body {
+  display: none;
+}
+#app[data-panel-open="true"] .panel-open {
+  display: none;
+}
+#app[data-panel-open="false"][data-panel="right"] .panel {
+  width: 40px;
+}
+#app[data-panel-open="false"][data-panel="bottom"] .panel {
+  height: 40px;
+}
+.panel-open {
+  flex: 1;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: 22px;
+  color: var(--muted);
+}
+.panel-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--line);
+  overflow-x: auto;
+  flex: none;
+}
+.panel-toggle {
+  border: 0;
+  background: transparent;
+  font-size: 20px;
+  padding: 0 8px;
+  color: var(--muted);
+}
+.tabs {
+  display: flex;
+  gap: 2px;
+}
+.tab {
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  padding: 4px 8px;
+  min-height: 30px;
+}
+.tab.active {
+  border-bottom-color: var(--accent);
+  box-shadow: none;
+}
+.panel-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.pane {
+  padding: 10px 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 100%;
+}
+.pane p {
+  overflow-wrap: anywhere;
+}
+.row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.group button {
+  min-height: 30px;
+  padding: 3px 9px;
+}
+.form-item {
+  display: grid;
+  gap: 4px;
+}
+.form-item > label:first-child,
+.form-item > span.label {
+  font-size: 13px;
+  color: var(--muted);
+}
+.toggles label {
+  padding: 2px 0;
+}
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.list-item {
+  text-align: left;
+  border-color: transparent;
+  background: var(--bg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.list-item.active {
+  border-color: var(--accent);
+}
+.sounds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  user-select: none;
+}
+.sound {
+  cursor: pointer;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 13px;
+}
+.sound:hover {
+  opacity: 0.6;
+}
+.reference {
+  display: flex;
+  gap: 10px;
+  min-height: 0;
+  flex: 1;
+}
+.reference-list {
+  width: 36%;
+  max-width: 260px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.reference-list button {
+  text-align: left;
+  border: 0;
+  background: transparent;
+  min-height: 26px;
+  padding: 2px 6px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.reference-doc {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  padding-right: 6px;
+}
+.reference-doc section {
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 10px;
+}
+.reference-doc pre {
+  cursor: pointer;
+  margin: 6px 0;
+}
+.reference-doc pre:hover {
+  outline: 1px solid var(--accent);
+}
+.reference-doc ul {
+  margin: 4px 0;
+  padding-left: 18px;
+  font-size: 13px;
+}
+.log {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-wrap: anywhere;
+}
+.log-error {
+  color: var(--bg);
+  background: var(--fg);
+  padding: 0 4px;
+  border-radius: 3px;
+}
+.log-highlight {
+  text-decoration: underline;
+}
+.progress {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--line);
+  overflow: hidden;
+}
+.progress > div {
+  height: 100%;
+  background: var(--accent);
+  width: 0;
+}
+@media (max-width: 720px) {
+  #app[data-panel="right"] .panel {
+    width: min(440px, 85vw);
+  }
+}

@@ -1,0 +1,109 @@
+{
+  "files": {
+    "strudel-LICENSE": {
+      "bytes": 34523,
+      "from": "package/LICENSE",
+      "package": "@strudel/repl",
+      "sha256": "0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0"
+    },
+    "strudel-reference.mjs": {
+      "bytes": 551695,
+      "from": "package/dist/index.mjs",
+      "package": "@strudel/reference",
+      "sha256": "e1106e09f60feb8c32307073d2df5adf1aba40d9de16cc0534e3e0c400ea1853"
+    },
+    "strudel-repl.js": {
+      "bytes": 2211981,
+      "from": "package/dist/index.js",
+      "package": "@strudel/repl",
+      "sha256": "36dd205ab824a59a4b8ada5dd1059f3eb4b4bc95ffdb2cad973f8382d090b29a"
+    }
+  },
+  "repl": "@strudel/repl",
+  "source": {
+    "commit": "f610965f4332837febe45743105da170e8b331ed",
+    "packages": [
+      {
+        "integrity": "sha512-haeqq/aIjh6WJrKpyl++d6mP2+8P+YF1wxOrD/8ikFVqRKBmKlo/9Ar6DP/d59YRx2VazkrvHG5CL9d1xIgULQ==",
+        "name": "@strudel/repl",
+        "tarball": "https://registry.npmjs.org/@strudel/repl/-/repl-1.3.0.tgz",
+        "version": "1.3.0"
+      },
+      {
+        "integrity": "sha512-Bv6TkmaCtyjbPY/G9r214vQq4VyAp4ZQuTQS60zjlp2YXbYJX4H7piM+roOEqczR4lqE4yYxfdg83jEubY+1zA==",
+        "name": "@strudel/codemirror",
+        "tarball": "https://registry.npmjs.org/@strudel/codemirror/-/codemirror-1.3.0.tgz",
+        "version": "1.3.0"
+      },
+      {
+        "integrity": "sha512-FA5Kxv3U+UhNRLIeuEpXck2o2J5AjHZbkAdSAK9Q2N3Az1G9Vnc+bXXfgDFyY3yRH9mXXQvTerz8jr876pGGng==",
+        "name": "@strudel/core",
+        "tarball": "https://registry.npmjs.org/@strudel/core/-/core-1.2.6.tgz",
+        "version": "1.2.6"
+      },
+      {
+        "integrity": "sha512-7UPJ4xgDi2bt12KWSVAEt4rZjcOajxhHBJikvNA3LQT5IA/FTfD+TRSNu0CSB7zhmFM0Njgq6t7ttgsC8fdKCg==",
+        "name": "@strudel/draw",
+        "tarball": "https://registry.npmjs.org/@strudel/draw/-/draw-1.2.6.tgz",
+        "version": "1.2.6"
+      },
+      {
+        "integrity": "sha512-8eBNHLffyj7G5b5L5bXP9ZjUzYll+SdRVZleIauOt5OOD4/0ezzqiEnqt4jQG/qlbQw9Jcwvzqvm0JWMEGVSuQ==",
+        "name": "@strudel/hydra",
+        "tarball": "https://registry.npmjs.org/@strudel/hydra/-/hydra-1.2.6.tgz",
+        "version": "1.2.6"
+      },
+      {
+        "integrity": "sha512-VblTT+g4G8uDYzVJamn7nWnrPWySYSb8sSdRD9KYXl87QTrFExZOFTePhzAo9IXUFsnYFQhD11B5QYANWF0ygw==",
+        "name": "@strudel/midi",
+        "tarball": "https://registry.npmjs.org/@strudel/midi/-/midi-1.3.0.tgz",
+        "version": "1.3.0"
+      },
+      {
+        "integrity": "sha512-I5GFPLHI3TPcJuD2RdDcurA+lTogaSQ0TB+EimKTgEtSAbU6ZMEkSUOXZIFO5eaAcJcMucgKaBcmTKpD4oZjPA==",
+        "name": "@strudel/mini",
+        "tarball": "https://registry.npmjs.org/@strudel/mini/-/mini-1.2.6.tgz",
+        "version": "1.2.6"
+      },
+      {
+        "integrity": "sha512-gr92e5gC+57KKqRolZYu0Qf7McKfrY9URHCp7UxpMhnd39utKekfBnD8WLnvv5jrYmbBuKvx/IYpaIxo51CgXQ==",
+        "name": "@strudel/soundfonts",
+        "tarball": "https://registry.npmjs.org/@strudel/soundfonts/-/soundfonts-1.3.0.tgz",
+        "version": "1.3.0"
+      },
+      {
+        "integrity": "sha512-I2ev0IJFmqvDt/vFkL8vIDXNanK5EZF+MNhlio3nHt1d6ngZZJyCNzC1OxoaiQKxZNN7+mpGIC3Cx/zcBC3weQ==",
+        "name": "@strudel/tonal",
+        "tarball": "https://registry.npmjs.org/@strudel/tonal/-/tonal-1.2.6.tgz",
+        "version": "1.2.6"
+      },
+      {
+        "integrity": "sha512-NzmyQDS4BqjafOPzHGFowxILDx3ZRAPD47YszxNaPB7PggMA2rMo9t3rLz80G0GxA0ZAyMbVMR3px9jDWnJ5hg==",
+        "name": "@strudel/transpiler",
+        "tarball": "https://registry.npmjs.org/@strudel/transpiler/-/transpiler-1.2.6.tgz",
+        "version": "1.2.6"
+      },
+      {
+        "integrity": "sha512-H23KJfxA5l2woG0TwNf+VMvjbj9SwR1y1qgzJW26Z35/9c5pbVs2IHPUpFwP0dWoA/4dmG2cmTMwI1e/TL8kGA==",
+        "name": "@strudel/webaudio",
+        "tarball": "https://registry.npmjs.org/@strudel/webaudio/-/webaudio-1.3.0.tgz",
+        "version": "1.3.0"
+      },
+      {
+        "integrity": "sha512-LhmsrErcv9EMFNb79+3tvn6h7WgzKp4yRe1XtT2+eRY9oEpV4Jz0nb9Dxil3OLaNhQ6V2FuwPWBLQJb2aVtwuQ==",
+        "name": "superdough",
+        "tarball": "https://registry.npmjs.org/superdough/-/superdough-1.3.0.tgz",
+        "version": "1.3.0"
+      },
+      {
+        "integrity": "sha512-1zJwv4U2NVWhw/T2fDL6XJjSKi8ltetw9qX79Lum51g7x0CX1naf6imbkdBzS7QKYyKnUYyHCtxsgFIKyGyiDg==",
+        "name": "@strudel/reference",
+        "tarball": "https://registry.npmjs.org/@strudel/reference/-/reference-1.2.2.tgz",
+        "version": "1.2.2"
+      }
+    ],
+    "repository": "https://codeberg.org/uzu/strudel",
+    "tag": "@strudel/repl@1.3.0"
+  },
+  "version": 2
+}

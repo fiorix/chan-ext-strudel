@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <title>Strudel</title>
+    <link rel="stylesheet" href="app.css" />
+  </head>
+  <body>
+    <main id="app" data-panel="right" data-panel-open="true">
+      <header class="header">
+        <div class="heading">
+          <h1>Strudel</h1>
+          <p id="status" role="status">Loading...</p>
+        </div>
+        <div class="actions" role="toolbar" aria-label="Transport">
+          <button id="play" type="button" title="Play or stop (Ctrl+Enter, Alt+.)" disabled>
+            play
+          </button>
+          <button id="update" type="button" title="Evaluate the pattern (Ctrl+Enter)" disabled>
+            update
+          </button>
+          <button id="share" type="button" title="Link to this pattern on strudel.cc">
+            share
+          </button>
+          <button id="learn" type="button" title="The Strudel workshop">learn</button>
+        </div>
+        <details id="about">
+          <summary aria-label="About Strudel" title="About">&#8943;</summary>
+          <div id="about-body" class="menu about"></div>
+        </details>
+      </header>
+      <p id="notice" class="notice" role="status" hidden></p>
+      <div id="popover" class="popover" role="dialog" aria-label="Link" hidden></div>
+      <div class="body">
+        <section id="stage" class="stage" aria-label="Strudel editor"></section>
+        <aside id="panel" class="panel" aria-label="Menu panel"></aside>
+      </div>
+    </main>
+    <script src="strudel-repl.js"></script>
+    <script type="module" src="app.js"></script>
+  </body>
+</html>
