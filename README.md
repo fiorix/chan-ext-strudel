@@ -2,6 +2,8 @@
 
 A [Chan](https://github.com/fiorix/chan) extension that self-hosts the [Strudel](https://strudel.cc) live-coding REPL in a Chan tab.
 
+![Strudel running in a Chan tab on a remote machine, with the live coding editor and welcome panel](docs/screenshot.png)
+
 Strudel is the work of its contributors, published under the GNU Affero General Public License v3 or later at [codeberg.org/uzu/strudel](https://codeberg.org/uzu/strudel). This extension embeds the published `@strudel/repl` bundle unchanged and rebuilds the strudel.cc shell around it: the play, update, share, and learn buttons, and a panel with welcome, patterns, sounds, reference, export, console, and settings tabs. What it adds is reaching Strudel through Chan, from the desktop, from a phone over the gateway, or from another machine, with your patterns and settings kept on the devserver. Everything you write and hear is Strudel.
 
 ## Install
