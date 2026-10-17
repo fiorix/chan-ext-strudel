@@ -2,7 +2,11 @@
 
 This file records notable development history and design decisions. Reference documentation describes only the repository's current behavior and contracts.
 
-## Unreleased
+## 2026-10-17
+
+### v0.1.0
+
+First release: the Strudel REPL in a Chan tab with the strudel.cc shell rebuilt around it, one static binary per platform, and the Strudel sources shipped in every archive.
 
 ### Initial design
 
@@ -19,3 +23,7 @@ Save the editor text per Chan session on the devserver, because the sandbox has 
 Rebuild the header buttons and the side panel of strudel.cc in the extension's own page code. They are React components of Strudel's Astro site, not of the embedded component, and the site itself cannot be self-hosted behind Chan's proxy: its assets are rooted at a fixed base path while Chan's capability path is random per process, it hardcodes a Supabase backend, and it reads session storage at module load, which throws in the opaque-origin sandbox. The rebuild drives the component's API and the globals Strudel publishes on `globalThis` after prebake, so no custom Strudel build is needed.
 
 The session record moves to version 2, modeled on strudel.cc: a list of patterns with the active one as the editor buffer, plus settings, written whole on each change. A version 1 record becomes the first pattern. Exports render offline through Strudel's own `renderPatternAudio`; because the sandbox blocks downloads, the page captures the WAV blob by wrapping `URL.createObjectURL` for the duration of the render and posts it to the server, which stores it under `exports/` without overwriting. The reference tab ships `@strudel/reference`, pinned in the lock like the bundle. Dialogs are blocked too, so destructive buttons ask for a second click. The lock gains a top-level `files` map so a second embedded file can come from a second package.
+
+### Worker timers
+
+Run Strudel's scheduler on worker-backed timers. Browsers throttle a hidden or occluded page's main-thread timers to about one tick per second, and the embedded component, unlike strudel.cc, passes no timers of its own to the scheduler, so playback dragged whenever the Chan window was not in front. The page now swaps `globalThis.setInterval` and `clearInterval` for a pair backed by a dedicated worker before the editor is created, which is when Strudel's clock captures them, and hands intervals back to the native timers if the worker fails to start.
