@@ -34,10 +34,49 @@ The panel beside the editor carries the strudel.cc tabs. **Patterns** keeps one 
 
 **Share** shows a strudel.cc link carrying the current pattern and **learn** the workshop link; both are shown as text to copy, because the sandbox blocks pop-ups. Sound keeps playing while another tab is in front. **Toggle Strudel Presentation** in the launcher fills the window with the editor; Chan's Restore and Close controls bring it back. The About menu names the Strudel release in use and where its source lives.
 
+## Local samples
+
+Put sample kits under `~/.chan/strudel/samples/` (`$CHAN_HOME/strudel/samples/` when `CHAN_HOME` is set) and load them by relative URL: a file's URL is `samples/` followed by its path in that folder. The tab resolves that URL through Chan, so a pattern that uses local kits works the same from the desktop, from a phone over the gateway, or from another machine, with no second server or port. The extension creates the folder when it starts.
+
+A kit is a folder holding its audio files and a `strudel.json` that names them:
+
+```
+~/.chan/strudel/samples/
+  my-kit/
+    strudel.json
+    kick.wav
+    snare-1.wav
+    snare-2.wav
+    hat.wav
+```
+
+```json
+{
+  "MyKit_bd": ["/kick.wav"],
+  "MyKit_sd": ["/snare-1.wav", "/snare-2.wav"],
+  "MyKit_hh": ["/hat.wav"]
+}
+```
+
+Load the kit once, then pick it with `.bank()` and a variant with `:n`:
+
+```js
+samples('samples/my-kit/strudel.json')
+s("bd*4, ~ sd:1, hh*8").bank("MyKit")
+```
+
+- Paths in `strudel.json` start with `/`: Strudel joins the JSON file's folder URL, trailing slash removed, and each path without a separator. A map with a `_base` URL uses that base instead.
+- `.bank("MyKit")` turns `bd` into `MyKit_bd`. Strudel splits sound names at `_`, so keep bank names free of underscores. Sound names are case-insensitive.
+- One `strudel.json` can describe several kits in its subfolders, with paths like `/my-kit/kick.wav`. Loading a map only registers names; each file is fetched the first time a pattern plays it.
+- A map can also be inline: `samples({bd: 'kick.wav'}, 'samples/my-kit/')`.
+- Symlinks are followed, so `ln -s ~/Music/kits ~/.chan/strudel/samples/kits` adds an existing library without copying it.
+- Only audio files (WAV, MP3, OGG, Opus, FLAC, M4A, AAC, AIFF, WebM) and JSON are served, up to 256 MiB each; hidden files and everything else answer 404. The browser must decode the format, and Chrome does not decode AIFF.
+- `samples/` URLs exist only in this tab. To use the same kits on strudel.cc, serve the folder with a static server that sends CORS headers and load the map by its full URL.
+
 ## Limits
 
-- Samples and soundfonts load from Strudel's upstream hosts, exactly as on strudel.cc. Without internet access the default sample banks do not load and evaluation reports the error.
-- Chan's extension sandbox grants no device permissions, no downloads, and no dialogs, so WebMIDI, microphone input, choosing an audio output device, importing sample folders, the vim keymap's prompts, and its clipboard register are unavailable, and delete buttons ask for a second click instead of a dialog. Exports go to the devserver's disk instead of a download.
+- The default samples and soundfonts load from Strudel's upstream hosts, exactly as on strudel.cc. Without internet access they do not load and evaluation reports the error; local samples still load.
+- Chan's extension sandbox grants no device permissions, no downloads, and no dialogs, so WebMIDI, microphone input, choosing an audio output device, importing sample folders (use [local samples](#local-samples) instead), the vim keymap's prompts, and its clipboard register are unavailable, and delete buttons ask for a second click instead of a dialog. Exports go to the devserver's disk instead of a download.
 - One Strudel tab per Chan window. Patterns and settings belong to the Chan session; there is no collaboration layer, and strudel.cc's public pattern feed is not available.
 - Chan must remain running. Chan does not respawn a crashed extension automatically.
 

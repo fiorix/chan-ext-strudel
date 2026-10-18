@@ -2,6 +2,12 @@
 
 This file records notable development history and design decisions. Reference documentation describes only the repository's current behavior and contracts.
 
+## Unreleased
+
+### Local samples
+
+Serve `<data-dir>/samples` at `samples/`, so a pattern loads local files by relative URL. The URL resolves under the tab's capability path, which Chan's proxy authenticates and forwards with the extension token, so one pattern works from the desktop, over the gateway, and from another machine with no second server, port, or CORS setup. The alternative, a separate static server, works only on the machine that runs it. Each path segment must be a plain, visible name, which refuses `..`, separators, and drive prefixes. Symlinks are followed: only the user can place them, and linking a library in beats copying it. Only audio types and JSON are served, under a sandbox CSP, because the capability path shares Chan's origin and an HTML or SVG file opened from it in a top-level tab would run as Chan. Files are read whole, up to 256 MiB, which avoids a streaming dependency; Strudel reads each sample whole before decoding it anyway.
+
 ## 2026-10-17
 
 ### v0.1.0

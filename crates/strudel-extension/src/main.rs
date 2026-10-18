@@ -4,14 +4,16 @@
 mod store;
 
 use std::collections::{BTreeMap, HashSet};
+use std::fs::File;
+use std::io::Read;
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
 use axum::body::Bytes;
-use axum::extract::{DefaultBodyLimit, Query, State};
+use axum::extract::{DefaultBodyLimit, Path as UrlPath, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::Response;
 use axum::routing::{get, post};
@@ -28,6 +30,7 @@ use store::Store;
 const SCOPE_HEADER: &str = "x-chan-extension-scope";
 const STATE_FILE: &str = "state.json";
 const EXPORTS_DIR: &str = "exports";
+const SAMPLES_DIR: &str = "samples";
 const REPOSITORY: &str = "https://github.com/fiorix/chan-ext-strudel";
 const INDEX_HTML: &str = include_str!("../assets/index.html");
 const APP_CSS: &str = include_str!("../assets/app.css");
@@ -44,14 +47,16 @@ const MAX_SETTINGS_BYTES: usize = 16 * 1024;
 /// A rendered WAV. Ten minutes of 48 kHz stereo 16-bit is about 110 MiB.
 const MAX_EXPORT_BYTES: usize = 256 * 1024 * 1024;
 const MAX_EXPORT_STEM: usize = 64;
+/// One sample file, read into memory before it is sent.
+const MAX_SAMPLE_BYTES: u64 = 256 * 1024 * 1024;
 
 #[derive(Debug, Parser)]
 #[command(name = "strudel-extension", about = "Strudel's REPL in a Chan tab")]
 struct Cli {
     #[arg(long, default_value = "127.0.0.1:0")]
     listen: SocketAddr,
-    /// Private storage for patterns, settings, and exports. Defaults to
-    /// <chan-home>/strudel.
+    /// Private storage for patterns, settings, and exports, and the samples
+    /// folder patterns load from. Defaults to <chan-home>/strudel.
     #[arg(long)]
     data_dir: Option<PathBuf>,
 }
@@ -59,6 +64,7 @@ struct Cli {
 struct AppState {
     token: String,
     store: Store,
+    samples: PathBuf,
     meta: Value,
 }
 
@@ -207,9 +213,18 @@ async fn main() -> Result<()> {
         .context("binding extension server")?;
     let address = listener.local_addr()?;
     let token = format!("{}{}", new_id(), new_id());
+    let data_dir = cli.data_dir.unwrap_or_else(|| chan_home().join("strudel"));
+    let store = Store::new(data_dir.clone())?;
+    // Create the folder so there is somewhere to put files. A symlink already
+    // in its place is kept, and a failure only leaves the route serving 404s.
+    let samples = data_dir.join(SAMPLES_DIR);
+    if let Err(error) = std::fs::create_dir_all(&samples) {
+        eprintln!("strudel: creating {}: {error}", samples.display());
+    }
     let state = Arc::new(AppState {
         token: token.clone(),
-        store: Store::new(cli.data_dir.unwrap_or_else(|| chan_home().join("strudel")))?,
+        store,
+        samples,
         meta,
     });
     let app = router(state);
@@ -229,6 +244,7 @@ fn router(state: Arc<AppState>) -> Router {
         .route("/strudel-reference.mjs", get(strudel_reference_mjs))
         .route("/meta", get(meta_handler))
         .route("/state", get(state_get).put(state_put))
+        .route("/samples/{*path}", get(sample))
         .route(
             "/export",
             post(export_wav).layer(DefaultBodyLimit::max(MAX_EXPORT_BYTES)),
@@ -472,6 +488,92 @@ async fn export_wav(
     ))
 }
 
+/// The media type served for a sample file name, or `None` to refuse it.
+/// Only audio and JSON: the capability path shares Chan's origin, so an HTML
+/// or SVG file opened from it in a top-level tab would run as Chan.
+fn sample_type(name: &str) -> Option<&'static str> {
+    let (_, extension) = name.rsplit_once('.')?;
+    let content_type = match extension.to_ascii_lowercase().as_str() {
+        "wav" => "audio/wav",
+        "mp3" => "audio/mpeg",
+        "ogg" | "oga" | "opus" => "audio/ogg",
+        "flac" => "audio/flac",
+        "m4a" => "audio/mp4",
+        "aac" => "audio/aac",
+        "aif" | "aiff" => "audio/aiff",
+        "webm" => "audio/webm",
+        "json" => "application/json",
+        _ => return None,
+    };
+    Some(content_type)
+}
+
+/// The file a `/samples/...` request names, relative to the samples folder,
+/// and its media type. Every segment must be a plain, visible name, so a
+/// request leaves the folder only through a symlink the user put there.
+fn sample_file(path: &str) -> Option<(PathBuf, &'static str)> {
+    let mut relative = PathBuf::new();
+    for segment in path.split('/').filter(|segment| !segment.is_empty()) {
+        if segment.starts_with('.')
+            || segment
+                .chars()
+                .any(|c| c.is_control() || c == '\\' || c == ':')
+        {
+            return None;
+        }
+        relative.push(segment);
+    }
+    let content_type = sample_type(relative.file_name()?.to_str()?)?;
+    Some((relative, content_type))
+}
+
+/// A regular file of at most `limit` bytes, following symlinks, or `None`
+/// when there is no such file to serve.
+fn read_sample(path: &Path, limit: u64) -> Result<Option<Vec<u8>>> {
+    // Stat before opening: opening a FIFO blocks until a writer appears.
+    if !std::fs::metadata(path).is_ok_and(|metadata| metadata.is_file()) {
+        return Ok(None);
+    }
+    let Ok(file) = File::open(path) else {
+        return Ok(None);
+    };
+    let mut bytes = Vec::new();
+    file.take(limit + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > limit {
+        bail!(
+            "{} exceeds the {} MiB sample limit.",
+            path.display(),
+            limit / (1024 * 1024)
+        );
+    }
+    Ok(Some(bytes))
+}
+
+/// Serve a file from the samples folder, so a pattern can load local files
+/// by relative URL, e.g. `samples('samples/kit/strudel.json')`.
+async fn sample(
+    State(state): State<Arc<AppState>>,
+    Query(auth): Query<AuthQuery>,
+    UrlPath(path): UrlPath<String>,
+) -> Result<Response, StatusCode> {
+    check_auth(&state, &auth)?;
+    let (relative, content_type) = sample_file(&path).ok_or(StatusCode::NOT_FOUND)?;
+    let file = state.samples.join(relative);
+    let bytes = tokio::task::spawn_blocking(move || read_sample(&file, MAX_SAMPLE_BYTES))
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .map_err(internal)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    Ok(Response::builder()
+        .header(header::CONTENT_TYPE, content_type)
+        .header(
+            header::CONTENT_SECURITY_POLICY,
+            "default-src 'none'; sandbox",
+        )
+        .body(bytes.into())
+        .expect("sample response"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -487,6 +589,7 @@ mod tests {
         let state = Arc::new(AppState {
             token: "secret".into(),
             store: Store::new(dir.path().to_path_buf()).unwrap(),
+            samples: dir.path().join(SAMPLES_DIR),
             meta: json!({}),
         });
         (dir, state)
@@ -779,5 +882,194 @@ mod tests {
             let mode = std::fs::metadata(&first_path).unwrap().permissions().mode() & 0o777;
             assert_eq!(mode, 0o600);
         }
+    }
+
+    #[test]
+    fn sample_paths_stay_in_the_folder_and_name_audio_or_json() {
+        assert_eq!(
+            sample_file("kit/bd.wav").unwrap(),
+            (Path::new("kit").join("bd.wav"), "audio/wav")
+        );
+        assert_eq!(
+            sample_file("/kit//Kick 1.WAV").unwrap(),
+            (Path::new("kit").join("Kick 1.WAV"), "audio/wav")
+        );
+        assert_eq!(
+            sample_file("kit/strudel.json").unwrap().1,
+            "application/json"
+        );
+        assert_eq!(sample_file("a.flac").unwrap().1, "audio/flac");
+        for path in [
+            "",
+            "/",
+            "..",
+            "../x.wav",
+            "kit/../../x.wav",
+            "./x.wav",
+            ".hidden.wav",
+            "kit/.git/x.wav",
+            "kit\\..\\x.wav",
+            "C:x.wav",
+            "x\u{0}.wav",
+            "kit/page.html",
+            "kit/image.svg",
+            "kit/app.js",
+            "kit/noext",
+        ] {
+            assert!(sample_file(path).is_none(), "{path:?}");
+        }
+    }
+
+    async fn body_bytes(response: Response) -> Bytes {
+        axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn samples_serve_files_under_the_folder_and_nothing_else() {
+        let (dir, state) = test_state();
+        let kit = state.samples.join("kit");
+        std::fs::create_dir_all(kit.join("dir.wav")).unwrap();
+        std::fs::write(kit.join("bd.wav"), b"RIFF bd").unwrap();
+        std::fs::write(kit.join("strudel.json"), b"{}").unwrap();
+        std::fs::write(kit.join("page.html"), b"<script>").unwrap();
+        std::fs::write(kit.join(".hidden.wav"), b"hidden").unwrap();
+        std::fs::write(dir.path().join("outside.wav"), b"outside").unwrap();
+        let get = |path: &str| sample(State(Arc::clone(&state)), auth(), UrlPath(path.to_string()));
+
+        let response = get("kit/bd.wav").await.unwrap();
+        assert_eq!(response.headers()[header::CONTENT_TYPE], "audio/wav");
+        assert!(
+            response.headers()[header::CONTENT_SECURITY_POLICY]
+                .to_str()
+                .unwrap()
+                .contains("sandbox")
+        );
+        assert_eq!(body_bytes(response).await.as_ref(), b"RIFF bd");
+        let response = get("kit/strudel.json").await.unwrap();
+        assert_eq!(response.headers()[header::CONTENT_TYPE], "application/json");
+        for path in [
+            "kit/page.html",
+            "kit/.hidden.wav",
+            "kit/dir.wav",
+            "kit/missing.wav",
+            "../outside.wav",
+        ] {
+            assert_eq!(
+                get(path).await.unwrap_err(),
+                StatusCode::NOT_FOUND,
+                "{path}"
+            );
+        }
+        assert_eq!(
+            sample(
+                State(Arc::clone(&state)),
+                Query(AuthQuery { t: "wrong".into() }),
+                UrlPath("kit/bd.wav".into())
+            )
+            .await
+            .unwrap_err(),
+            StatusCode::UNAUTHORIZED
+        );
+    }
+
+    #[test]
+    fn sample_reads_are_capped() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("x.wav");
+        std::fs::write(&path, b"1234").unwrap();
+        assert_eq!(read_sample(&path, 4).unwrap().unwrap(), b"1234");
+        assert!(read_sample(&path, 3).is_err());
+        assert!(
+            read_sample(&dir.path().join("missing.wav"), 4)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn samples_follow_symlinks_the_user_placed() {
+        use std::os::unix::fs::symlink;
+        let (dir, state) = test_state();
+        let library = dir.path().join("library");
+        std::fs::create_dir_all(library.join("kit")).unwrap();
+        std::fs::write(library.join("kit/sd.wav"), b"RIFF sd").unwrap();
+        std::fs::create_dir_all(&state.samples).unwrap();
+        symlink(&library, state.samples.join("linked")).unwrap();
+        symlink(library.join("kit/sd.wav"), state.samples.join("sd.wav")).unwrap();
+        for path in ["linked/kit/sd.wav", "sd.wav"] {
+            let response = sample(State(Arc::clone(&state)), auth(), UrlPath(path.to_string()))
+                .await
+                .unwrap();
+            assert_eq!(body_bytes(response).await.as_ref(), b"RIFF sd");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_fifo_is_not_opened() {
+        let dir = tempfile::tempdir().unwrap();
+        let fifo = dir.path().join("pipe.wav");
+        assert!(
+            std::process::Command::new("mkfifo")
+                .arg(&fifo)
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(read_sample(&fifo, 4).unwrap().is_none());
+    }
+
+    /// One raw HTTP/1.1 request, so the test sees the router's own path
+    /// matching and percent-decoding.
+    fn http_get(address: SocketAddr, target: &str) -> (String, Vec<u8>) {
+        use std::io::Write;
+        let mut stream = std::net::TcpStream::connect(address).unwrap();
+        write!(
+            stream,
+            "GET {target} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+        )
+        .unwrap();
+        let mut response = Vec::new();
+        stream.read_to_end(&mut response).unwrap();
+        let split = response
+            .windows(4)
+            .position(|window| window == b"\r\n\r\n")
+            .unwrap();
+        let head = String::from_utf8_lossy(&response[..split]).into_owned();
+        (head, response[split + 4..].to_vec())
+    }
+
+    #[tokio::test]
+    async fn samples_route_decodes_paths_and_requires_the_token() {
+        let (dir, state) = test_state();
+        std::fs::create_dir_all(state.samples.join("my kit")).unwrap();
+        std::fs::write(state.samples.join("my kit/Kick 1.wav"), b"RIFF kick").unwrap();
+        std::fs::write(dir.path().join("outside.wav"), b"outside").unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, router(state)).await });
+        let get =
+            |target: &'static str| tokio::task::spawn_blocking(move || http_get(address, target));
+
+        let (head, body) = get("/samples/my%20kit/Kick%201.wav?t=secret")
+            .await
+            .unwrap();
+        assert!(head.starts_with("HTTP/1.1 200"), "{head}");
+        assert_eq!(body, b"RIFF kick");
+        let (head, _) = get("/samples/my%20kit/Kick%201.wav").await.unwrap();
+        assert!(head.starts_with("HTTP/1.1 401"), "{head}");
+        for target in [
+            "/samples/%2e%2e/outside.wav?t=secret",
+            "/samples/my%20kit/%2e%2e/%2e%2e/outside.wav?t=secret",
+            "/samples/..%2foutside.wav?t=secret",
+        ] {
+            let (head, _) = get(target).await.unwrap();
+            assert!(head.starts_with("HTTP/1.1 404"), "{target}: {head}");
+        }
+        let (head, _) = get("/samples/?t=secret").await.unwrap();
+        assert!(head.starts_with("HTTP/1.1 404"), "{head}");
     }
 }
