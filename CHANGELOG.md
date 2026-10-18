@@ -2,7 +2,11 @@
 
 This file records notable development history and design decisions. Reference documentation describes only the repository's current behavior and contracts.
 
-## Unreleased
+## 2026-10-18
+
+### v0.2.0
+
+Local samples: patterns load kits from `~/.chan/strudel/samples/` by relative URL, through Chan, from any device.
 
 ### Local samples
 
