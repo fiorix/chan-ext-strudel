@@ -462,6 +462,35 @@ summary::-webkit-details-marker {
   background: var(--accent);
   width: 0;
 }
+.recording-dialog {
+  width: min(560px, calc(100vw - 24px));
+  max-height: calc(100dvh - 48px);
+  padding: 18px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg);
+  color: var(--fg);
+  box-shadow: 0 12px 36px #0005;
+}
+.recording-dialog::backdrop {
+  background: #0008;
+}
+.recording-dialog h2 {
+  margin: 0 0 12px;
+}
+.recording-dialog p {
+  margin: 10px 0;
+}
+.recording-dialog .row {
+  margin-top: 14px;
+}
+#recording-status {
+  min-height: 22px;
+}
+#recording-example {
+  user-select: text;
+}
 @media (max-width: 720px) {
   #app[data-panel="right"] .panel {
     width: min(440px, 85vw);

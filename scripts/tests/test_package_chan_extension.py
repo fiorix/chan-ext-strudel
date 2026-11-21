@@ -118,7 +118,9 @@ class PackageChanExtensionTests(unittest.TestCase):
         parsed = tomllib.loads(declaration.decode())
         self.assertEqual(set(parsed), {"name", "command", "args", "capabilities"})
         self.assertEqual(parsed["name"], "Strudel")
-        self.assertEqual(parsed["capabilities"], ["presentation"])
+        self.assertEqual(
+            parsed["capabilities"], ["presentation", "session-context", "microphone"]
+        )
 
     def test_a_stale_source_tarball_is_refused(self) -> None:
         lock = PACKAGE.FETCH.load_lock(self.repo / "runtime/strudel.lock.json")

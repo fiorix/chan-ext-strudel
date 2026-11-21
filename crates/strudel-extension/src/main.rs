@@ -1,6 +1,7 @@
 //! Strudel's REPL in a Chan tab: the embedded UI, the pinned Strudel inputs,
-//! and per-session patterns, settings, and WAV exports.
+//! per-session patterns and settings, WAV exports, and microphone samples.
 
+mod control;
 mod store;
 
 use std::collections::{BTreeMap, HashSet};
@@ -25,17 +26,20 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use tokio::net::TcpListener;
 
+use control::Cs;
 use store::Store;
 
 const SCOPE_HEADER: &str = "x-chan-extension-scope";
 const STATE_FILE: &str = "state.json";
 const EXPORTS_DIR: &str = "exports";
 const SAMPLES_DIR: &str = "samples";
+const RECORDINGS_DIR: &str = "recordings";
 const REPOSITORY: &str = "https://github.com/fiorix/chan-ext-strudel";
 const INDEX_HTML: &str = include_str!("../assets/index.html");
 const APP_CSS: &str = include_str!("../assets/app.css");
 const APP_JS: &str = include_str!("../assets/app.js");
 const UI_JS: &str = include_str!("../assets/ui.js");
+const RECORDING_JS: &str = include_str!("../assets/recording.js");
 const STRUDEL_REPL_JS: &[u8] = include_bytes!("../../../runtime/strudel-repl.js");
 const STRUDEL_REFERENCE_MJS: &[u8] = include_bytes!("../../../runtime/strudel-reference.mjs");
 const STRUDEL_LOCK: &str = include_str!("../../../runtime/strudel.lock.json");
@@ -49,6 +53,7 @@ const MAX_EXPORT_BYTES: usize = 256 * 1024 * 1024;
 const MAX_EXPORT_STEM: usize = 64;
 /// One sample file, read into memory before it is sent.
 const MAX_SAMPLE_BYTES: u64 = 256 * 1024 * 1024;
+const MAX_RECORDING_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Debug, Parser)]
 #[command(name = "strudel-extension", about = "Strudel's REPL in a Chan tab")]
@@ -65,6 +70,7 @@ struct AppState {
     token: String,
     store: Store,
     samples: PathBuf,
+    cs: Option<Cs>,
     meta: Value,
 }
 
@@ -221,10 +227,18 @@ async fn main() -> Result<()> {
     if let Err(error) = std::fs::create_dir_all(&samples) {
         eprintln!("strudel: creating {}: {error}", samples.display());
     }
+    let cs = match Cs::locate() {
+        Ok(cs) => Some(cs),
+        Err(error) => {
+            eprintln!("strudel: {error:#}");
+            None
+        }
+    };
     let state = Arc::new(AppState {
         token: token.clone(),
         store,
         samples,
+        cs,
         meta,
     });
     let app = router(state);
@@ -240,6 +254,7 @@ fn router(state: Arc<AppState>) -> Router {
         .route("/app.css", get(app_css))
         .route("/app.js", get(app_js))
         .route("/ui.js", get(ui_js))
+        .route("/recording.js", get(recording_js))
         .route("/strudel-repl.js", get(strudel_repl_js))
         .route("/strudel-reference.mjs", get(strudel_reference_mjs))
         .route("/meta", get(meta_handler))
@@ -249,6 +264,11 @@ fn router(state: Arc<AppState>) -> Router {
             "/export",
             post(export_wav).layer(DefaultBodyLimit::max(MAX_EXPORT_BYTES)),
         )
+        .route(
+            "/recording",
+            post(record_microphone).layer(DefaultBodyLimit::max(MAX_RECORDING_BYTES)),
+        )
+        .route("/recordings/open", post(open_recordings))
         .with_state(state)
 }
 
@@ -317,6 +337,7 @@ asset!(index, "text/html; charset=utf-8", INDEX_HTML);
 asset!(app_css, "text/css; charset=utf-8", APP_CSS);
 asset!(app_js, "text/javascript; charset=utf-8", APP_JS);
 asset!(ui_js, "text/javascript; charset=utf-8", UI_JS);
+asset!(recording_js, "text/javascript; charset=utf-8", RECORDING_JS);
 asset!(
     strudel_repl_js,
     "text/javascript; charset=utf-8",
@@ -488,6 +509,107 @@ async fn export_wav(
     ))
 }
 
+fn recording_extension(headers: &HeaderMap, body: &[u8]) -> Option<&'static str> {
+    let media_type = headers
+        .get(header::CONTENT_TYPE)?
+        .to_str()
+        .ok()?
+        .split(';')
+        .next()?
+        .trim()
+        .to_ascii_lowercase();
+    match media_type.as_str() {
+        "audio/webm" if body.starts_with(b"\x1a\x45\xdf\xa3") => Some("webm"),
+        "audio/ogg" if body.starts_with(b"OggS") => Some("ogg"),
+        "audio/mp4" | "audio/x-m4a" if body.len() >= 12 && &body[4..8] == b"ftyp" => Some("m4a"),
+        _ => None,
+    }
+}
+
+/// Store one client-side microphone recording where patterns can load it.
+async fn record_microphone(
+    State(state): State<Arc<AppState>>,
+    Query(auth): Query<AuthQuery>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Json<Value>, StatusCode> {
+    check_auth(&state, &auth)?;
+    header_value(&headers, SCOPE_HEADER)?;
+    let extension = recording_extension(&headers, &body).ok_or(StatusCode::BAD_REQUEST)?;
+    let bytes = body.len();
+    let directory = state.samples.join(RECORDINGS_DIR);
+    let stem = format!("microphone-{}", now());
+    let path = tokio::task::spawn_blocking(move || {
+        Store::new(directory)?.write_unique(&stem, extension, &body)
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    .map_err(internal)?;
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .expect("a generated recording name is UTF-8");
+    Ok(Json(json!({
+        "path": path.display().to_string(),
+        "url": format!("samples/{RECORDINGS_DIR}/{name}"),
+        "bytes": bytes,
+    })))
+}
+
+#[derive(Deserialize)]
+struct OpenRecordings {
+    window_id: String,
+}
+
+fn api_error(status: StatusCode, message: impl Into<String>) -> (StatusCode, Json<Value>) {
+    (status, Json(json!({"error": message.into()})))
+}
+
+async fn open_recordings(
+    State(state): State<Arc<AppState>>,
+    Query(auth): Query<AuthQuery>,
+    headers: HeaderMap,
+    Json(request): Json<OpenRecordings>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    check_auth(&state, &auth)
+        .map_err(|status| api_error(status, "The extension token is missing or invalid."))?;
+    header_value(&headers, SCOPE_HEADER)
+        .map_err(|status| api_error(status, "The extension scope is missing or invalid."))?;
+    if !valid_id(&request.window_id) {
+        return Err(api_error(
+            StatusCode::BAD_REQUEST,
+            "Invalid Chan window id.",
+        ));
+    }
+    let directory = state.samples.join(RECORDINGS_DIR);
+    let stored = directory.clone();
+    tokio::task::spawn_blocking(move || Store::new(stored).map(|_| ()))
+        .await
+        .map_err(|_| {
+            api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Could not create the recordings directory.",
+            )
+        })?
+        .map_err(|error| {
+            eprintln!("strudel: {error:#}");
+            api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Could not create the recordings directory.",
+            )
+        })?;
+    let cs = state.cs.as_ref().ok_or_else(|| {
+        api_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "The cs client is unavailable on the devserver.",
+        )
+    })?;
+    cs.open(&request.window_id, &directory)
+        .await
+        .map_err(|error| api_error(StatusCode::BAD_GATEWAY, format!("{error:#}")))?;
+    Ok(Json(json!({"path": directory.display().to_string()})))
+}
+
 /// The media type served for a sample file name, or `None` to refuse it.
 /// Only audio and JSON: the capability path shares Chan's origin, so an HTML
 /// or SVG file opened from it in a top-level tab would run as Chan.
@@ -590,6 +712,7 @@ mod tests {
             token: "secret".into(),
             store: Store::new(dir.path().to_path_buf()).unwrap(),
             samples: dir.path().join(SAMPLES_DIR),
+            cs: None,
             meta: json!({}),
         });
         (dir, state)
@@ -675,13 +798,14 @@ mod tests {
 
     #[test]
     fn assets_use_relative_urls_and_validate_parent_messages() {
-        for body in [INDEX_HTML, APP_CSS, APP_JS, UI_JS] {
+        for body in [INDEX_HTML, APP_CSS, APP_JS, UI_JS, RECORDING_JS] {
             for needle in ["src=\"/", "href=\"/", "url(/", "\"/api/", "import(\"/"] {
                 assert!(!body.contains(needle), "{needle}");
             }
         }
         assert!(INDEX_HTML.contains("src=\"strudel-repl.js\""));
         assert!(APP_JS.contains("from \"./ui.js\""));
+        assert!(APP_JS.contains("from \"./recording.js\""));
         assert!(UI_JS.contains("import(\"./strudel-reference.mjs\")"));
         assert!(APP_JS.contains("event.source !== window.parent"));
         assert!(APP_JS.contains("// Chan's keyboard relay."));
@@ -882,6 +1006,141 @@ mod tests {
             let mode = std::fs::metadata(&first_path).unwrap().permissions().mode() & 0o777;
             assert_eq!(mode, 0o600);
         }
+    }
+
+    fn recording_headers(media_type: &str) -> HeaderMap {
+        let mut headers = scoped("a");
+        headers.insert(header::CONTENT_TYPE, media_type.parse().unwrap());
+        headers
+    }
+
+    #[test]
+    fn recording_formats_match_their_container_signatures() {
+        assert_eq!(
+            recording_extension(
+                &recording_headers("audio/webm; codecs=opus"),
+                b"\x1a\x45\xdf\xa3webm"
+            ),
+            Some("webm")
+        );
+        assert_eq!(
+            recording_extension(&recording_headers("audio/ogg"), b"OggSoggaudio"),
+            Some("ogg")
+        );
+        assert_eq!(
+            recording_extension(&recording_headers("audio/mp4"), b"\x00\x00\x00\x18ftypM4A "),
+            Some("m4a")
+        );
+        for (media_type, body) in [
+            ("audio/webm", &b"not webm"[..]),
+            ("audio/ogg", &b"not ogg"[..]),
+            ("audio/mp4", &b"not mp4"[..]),
+            ("text/html", &b"<script>"[..]),
+        ] {
+            assert_eq!(
+                recording_extension(&recording_headers(media_type), body),
+                None
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn recordings_are_unique_and_readable_as_samples() {
+        let (dir, state) = test_state();
+        let audio = Bytes::from_static(b"\x1a\x45\xdf\xa3webm");
+        let save = |body: Bytes| {
+            record_microphone(
+                State(Arc::clone(&state)),
+                auth(),
+                recording_headers("audio/webm; codecs=opus"),
+                body,
+            )
+        };
+        let first = save(audio.clone()).await.unwrap().0;
+        let second = save(audio.clone()).await.unwrap().0;
+        let first_path = PathBuf::from(first["path"].as_str().unwrap());
+        let second_path = PathBuf::from(second["path"].as_str().unwrap());
+        assert_eq!(first_path.parent(), second_path.parent());
+        assert_eq!(
+            first_path.parent().unwrap(),
+            dir.path().join(SAMPLES_DIR).join(RECORDINGS_DIR)
+        );
+        assert_ne!(first_path, second_path);
+        assert_eq!(std::fs::read(&first_path).unwrap(), audio.as_ref());
+        assert_ne!(first["url"].as_str(), second["url"].as_str());
+        let name = first_path.file_name().unwrap().to_str().unwrap();
+        let response = sample(
+            State(Arc::clone(&state)),
+            auth(),
+            UrlPath(format!("recordings/{name}")),
+        )
+        .await
+        .unwrap();
+        assert_eq!(response.headers()[header::CONTENT_TYPE], "audio/webm");
+        assert_eq!(body_bytes(response).await.as_ref(), audio.as_ref());
+    }
+
+    #[tokio::test]
+    async fn recording_writes_require_auth_scope_and_valid_audio() {
+        let (_dir, state) = test_state();
+        let audio = Bytes::from_static(b"\x1a\x45\xdf\xa3webm");
+        assert_eq!(
+            record_microphone(
+                State(Arc::clone(&state)),
+                Query(AuthQuery { t: "wrong".into() }),
+                recording_headers("audio/webm"),
+                audio.clone(),
+            )
+            .await
+            .unwrap_err(),
+            StatusCode::UNAUTHORIZED
+        );
+        let mut without_scope = recording_headers("audio/webm");
+        without_scope.remove(SCOPE_HEADER);
+        assert_eq!(
+            record_microphone(State(Arc::clone(&state)), auth(), without_scope, audio,)
+                .await
+                .unwrap_err(),
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            record_microphone(
+                State(state),
+                auth(),
+                recording_headers("audio/webm"),
+                Bytes::from_static(b"not audio"),
+            )
+            .await
+            .unwrap_err(),
+            StatusCode::BAD_REQUEST
+        );
+    }
+
+    #[tokio::test]
+    async fn opening_recordings_validates_the_window_and_reports_missing_cs() {
+        let (_dir, state) = test_state();
+        let invalid = open_recordings(
+            State(Arc::clone(&state)),
+            auth(),
+            scoped("a"),
+            Json(OpenRecordings {
+                window_id: "../x".into(),
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(invalid.0, StatusCode::BAD_REQUEST);
+        let unavailable = open_recordings(
+            State(state),
+            auth(),
+            scoped("a"),
+            Json(OpenRecordings {
+                window_id: "window-a".into(),
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(unavailable.0, StatusCode::SERVICE_UNAVAILABLE);
     }
 
     #[test]

@@ -27,6 +27,7 @@
             share
           </button>
           <button id="learn" type="button" title="The Strudel workshop">learn</button>
+          <button id="record" type="button" title="Record from the microphone">Record</button>
         </div>
         <details id="about">
           <summary aria-label="About Strudel" title="About">&#8943;</summary>
@@ -40,6 +41,19 @@
         <aside id="panel" class="panel" aria-label="Menu panel"></aside>
       </div>
     </main>
+    <dialog id="recording-dialog" class="recording-dialog" aria-labelledby="recording-title" aria-describedby="recording-permission">
+      <h2 id="recording-title">Record microphone</h2>
+      <p id="recording-permission">Your browser will ask for microphone permission. Choose Allow when prompted. Recording never starts until you click the button.</p>
+      <p class="muted">Takes are limited to 10 minutes or 64 MiB and saved as samples on the devserver.</p>
+      <p id="recording-status" role="status">Ready to record.</p>
+      <p id="recording-result" class="muted" hidden></p>
+      <pre id="recording-example" hidden></pre>
+      <div class="row">
+        <button id="recording-toggle" type="button">record from microphone</button>
+        <button id="recording-open" type="button" disabled>show in file browser</button>
+        <button id="recording-close" type="button">close</button>
+      </div>
+    </dialog>
     <script src="strudel-repl.js"></script>
     <script type="module" src="app.js"></script>
   </body>

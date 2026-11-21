@@ -4,7 +4,7 @@ A [Chan](https://github.com/fiorix/chan) extension that self-hosts the [Strudel]
 
 ![Strudel running in a Chan tab on a remote machine, with the live coding editor and welcome panel](docs/screenshot.png)
 
-Strudel is the work of its contributors, published under the GNU Affero General Public License v3 or later at [codeberg.org/uzu/strudel](https://codeberg.org/uzu/strudel). This extension embeds the published `@strudel/repl` bundle unchanged and rebuilds the strudel.cc shell around it: the play, update, share, and learn buttons, and a panel with welcome, patterns, sounds, reference, export, console, and settings tabs. What it adds is reaching Strudel through Chan, from the desktop, from a phone over the gateway, or from another machine, with your patterns and settings kept on the devserver. Everything you write and hear is Strudel.
+Strudel is the work of its contributors, published under the GNU Affero General Public License v3 or later at [codeberg.org/uzu/strudel](https://codeberg.org/uzu/strudel). This extension embeds the published `@strudel/repl` bundle unchanged and rebuilds the strudel.cc shell around it: the play, update, share, learn, and Record buttons, and a panel with welcome, patterns, sounds, reference, export, console, and settings tabs. What it adds is reaching Strudel through Chan, from the desktop, from a phone over the gateway, or from another machine, with your patterns and settings kept on the devserver. Everything you write and hear is Strudel.
 
 ## Install
 
@@ -33,6 +33,12 @@ Click anywhere in the tab once: browsers start audio only after a gesture. Ctrl+
 The panel beside the editor carries the strudel.cc tabs. **Patterns** keeps one entry per pattern, saved on the devserver about a second after each change and separately for each Chan session; new, duplicate, and delete work as on strudel.cc, and a pattern's title comes from a first-line `// "title"` comment. **Sounds** lists every registered sound by kind; hold a name to preview it. **Reference** is the documented function list, and clicking an example appends it to the editor. **Export** renders cycles offline to a WAV and writes it under `~/.chan/strudel/exports/`, since the sandbox blocks downloads. **Console** shows Strudel's log. **Settings** covers the editor (theme, font, keybindings, highlighting), polyphony, multi-channel orbits, and the panel position, all saved with the session.
 
 **Share** shows a strudel.cc link carrying the current pattern and **learn** the workshop link; both are shown as text to copy, because the sandbox blocks pop-ups. Sound keeps playing while another tab is in front. **Toggle Strudel Presentation** in the launcher fills the window with the editor; Chan's Restore and Close controls bring it back. The About menu names the Strudel release in use and where its source lives.
+
+## Microphone recordings
+
+**Record** opens an overlay for recording the microphone of the browser or desktop client viewing Strudel. Click **record from microphone**, then choose **Allow** when the browser asks for permission. **stop & save** writes the take; closing or cancelling an active take discards it and releases the microphone. A take is limited to 10 minutes or 64 MiB and keeps the browser's native WebM, Ogg, or M4A format.
+
+Recordings are shared across sessions under `~/.chan/strudel/samples/recordings/` (`$CHAN_HOME/strudel/samples/recordings/` when `CHAN_HOME` is set). The overlay shows the saved path and a pattern example. **show in file browser** runs `cs open` on that directory in the originating Chan window. Recording requires a Chan build with the `microphone` extension capability; older Chan versions reject the extension declaration. Chan's parent window performs the capture, so the Strudel iframe keeps its opaque-origin sandbox.
 
 ## Local samples
 
@@ -76,7 +82,7 @@ s("bd*4, ~ sd:1, hh*8").bank("MyKit")
 ## Limits
 
 - The default samples and soundfonts load from Strudel's upstream hosts, exactly as on strudel.cc. Without internet access they do not load and evaluation reports the error; local samples still load.
-- Chan's extension sandbox grants no device permissions, no downloads, and no dialogs, so WebMIDI, microphone input, choosing an audio output device, importing sample folders (use [local samples](#local-samples) instead), the vim keymap's prompts, and its clipboard register are unavailable, and delete buttons ask for a second click instead of a dialog. Exports go to the devserver's disk instead of a download.
+- Chan's extension sandbox grants no direct device permissions, no downloads, and no JavaScript dialogs, so WebMIDI, choosing an audio output device, importing sample folders (use [local samples](#local-samples) instead), the vim keymap's prompts, and its clipboard register are unavailable, and delete buttons ask for a second click instead of a dialog. Microphone recording works only through Chan's host bridge on builds with the `microphone` capability. Exports and recordings go to the devserver's disk instead of a download.
 - One Strudel tab per Chan window. Patterns and settings belong to the Chan session; there is no collaboration layer, and strudel.cc's public pattern feed is not available.
 - Chan must remain running. Chan does not respawn a crashed extension automatically.
 

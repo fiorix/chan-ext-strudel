@@ -1,4 +1,4 @@
 name = "Strudel"
 command = "/absolute/path/to/strudel-extension"
 args = []
-capabilities = ["presentation"]
+capabilities = ["presentation", "session-context", "microphone"]

@@ -1,5 +1,6 @@
 // Opaque-origin iframe. Durable data belongs to the extension server.
 import { createPanel } from "./ui.js";
+import { createRecording } from "./recording.js";
 
 const HOST_READY = "chan:extension-ready:v1";
 const HOST_COMMAND = "chan:extension-command:v1";
@@ -74,6 +75,7 @@ const ui = Object.fromEntries(
     "update",
     "share",
     "learn",
+    "record",
   ].map((id) => [id, el(id)]),
 );
 const state = {
@@ -91,6 +93,7 @@ const state = {
   panel: null,
   listeners: new Map(),
 };
+const recording = createRecording(window.parent);
 
 function emptyDoc() {
   return { version: STATE_VERSION, active: null, patterns: [], settings: {} };
@@ -546,6 +549,7 @@ function wireHeader() {
       "The interactive workshop on strudel.cc, which also hosts the full documentation.",
     );
   });
+  ui.record.addEventListener("click", recording.show);
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && !ui.popover.hidden) hidePopover();
   });
@@ -604,7 +608,10 @@ function runCommand(message) {
 for (const type of ["keyup", "input", "paste", "cut"]) {
   document.addEventListener(type, scheduleSave);
 }
-window.addEventListener("pagehide", flush);
+window.addEventListener("pagehide", () => {
+  recording.cancel();
+  flush();
+});
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) flush();
 });
@@ -625,6 +632,7 @@ window.addEventListener("message", (event) => {
   if (event.source !== window.parent) return;
   const message = event.data;
   if (!message || typeof message !== "object") return;
+  recording.handle(message);
   if (message.type === HOST_COMMAND && typeof message.id === "string") {
     runCommand(message);
   }
