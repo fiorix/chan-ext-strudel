@@ -64,9 +64,10 @@ export function createRecording(host) {
     if (stopButton) stopButton.disabled = !(activeRequestId && ["armed", "starting", "recording", "finishing"].includes(hostState));
     if (cancelButton) cancelButton.disabled = !activeRequestId;
     if (status) {
+      const waiting = [...takes.values()].filter((take) => take.status === "pending" || take.status === "failed").length;
       if (reason) status.textContent = reason;
       else if (stateText) status.textContent = stateText;
-      else if (takes.size) status.textContent = `${takes.size} recording${takes.size === 1 ? "" : "s"} waiting to save.`;
+      else if (waiting) status.textContent = `${waiting} recording${waiting === 1 ? "" : "s"} waiting to save.`;
       else status.textContent = "Ready to record. Chan will ask you to start the take.";
     }
     if (takesList) renderTakes();
@@ -158,7 +159,6 @@ export function createRecording(host) {
   function begin() {
     if (source !== "available" || activeRequestId) return;
     activeRequestId = requestId();
-    hostState = "armed";
     hostError = "";
     send({ action: "open", request_id: activeRequestId, source: "microphone", processing: "raw" });
     render();
@@ -175,7 +175,6 @@ export function createRecording(host) {
   toggle?.addEventListener("click", begin);
   stopButton?.addEventListener("click", () => {
     if (!activeRequestId) return;
-    hostState = "finishing";
     send({ action: "stop", request_id: activeRequestId });
     render();
   });

@@ -163,6 +163,92 @@ test("a redelivered take with no local request is offered for save and discard s
   assert.ok(sent.some((m) => m.action === "ack" && m.take_id === TAKE_B));
 });
 
+test("status counts only pending and failed takes as waiting", async () => {
+  const TAKE_C = "cccccccccccccccccccccccccccccccc";
+  const { ui, el } = await load(async (url) => url.includes(TAKE_C) ? { ok: false, status: 503, json: async () => ({}) } : { ok: true, status: 200, json: async () => ({ path: "/tmp/mic.webm", url: "samples/recordings/mic.webm", bytes: 5 }) });
+  ui.handle(sources("available"));
+  ui.handle(event("req-a", "take", { take_id: TAKE_A, audio: new Blob(["a"], { type: "audio/webm" }), mime: "audio/webm", started_at: 1704164645000 }));
+  await settle();
+  assert.equal(ui.takes().find((t) => t.take_id === TAKE_A).status, "saved");
+  ui.handle(event("req-b", "take", { take_id: TAKE_B, audio: new Blob(["b"], { type: "audio/webm" }), mime: "audio/webm", started_at: 1704164646000, redelivered: true }));
+  await settle();
+  assert.equal(ui.takes().length, 2);
+  assert.equal(el("recording-status").textContent, "1 recording waiting to save.");
+  const rowB = el("recording-takes").children.find((r) => r.dataset.takeId === TAKE_B);
+  rowB.children.at(-1).children.find((b) => b.dataset.action === "retry").click();
+  await settle();
+  assert.equal(ui.takes().find((t) => t.take_id === TAKE_B).status, "saved");
+  assert.equal(el("recording-status").textContent, "Ready to record. Chan will ask you to start the take.");
+  ui.handle(event("req-c", "take", { take_id: TAKE_C, audio: new Blob(["c"], { type: "audio/webm" }), mime: "audio/webm", started_at: 1704164647000 }));
+  await settle();
+  assert.equal(ui.takes().find((t) => t.take_id === TAKE_C).status, "failed");
+  assert.equal(el("recording-status").textContent, "1 recording waiting to save.");
+});
+
+test("begin and stop show only host-reported state", async () => {
+  const { ui, el, sent } = await load(async () => { throw new Error("no fetch"); });
+  ui.handle(sources("available"));
+  el("recording-toggle").click();
+  const requestId = sent.at(-1).request_id;
+  assert.ok(requestId);
+  assert.equal(el("recording-toggle").disabled, true);
+  assert.equal(el("recording-stop").disabled, true);
+  assert.equal(el("recording-cancel").disabled, false);
+  assert.equal(el("recording-status").textContent, "Ready to record. Chan will ask you to start the take.");
+  ui.handle(event(requestId, "armed"));
+  assert.equal(el("recording-status").textContent, "Waiting for you to start recording in Chan.");
+  assert.equal(el("recording-stop").disabled, false);
+  ui.handle(event(requestId, "recording"));
+  assert.equal(el("recording-status").textContent, "Recording in Chan. Use Stop in Chan or here to finish.");
+  el("recording-stop").click();
+  assert.equal(el("recording-status").textContent, "Recording in Chan. Use Stop in Chan or here to finish.");
+  assert.equal(el("recording-stop").disabled, false);
+  ui.handle(event(requestId, "finishing"));
+  assert.equal(el("recording-status").textContent, "Finishing the recording in Chan.");
+});
+
+test("stop then close before take delivery still lands the take under its own id", async () => {
+  const { ui, el, sent } = await load(async () => ({ ok: true, status: 200, json: async () => ({ path: "/tmp/mic.webm", url: "samples/recordings/mic.webm", bytes: 5 }) }));
+  ui.handle(sources("available"));
+  ui.show();
+  el("recording-toggle").click();
+  const requestId = sent.at(-1).request_id;
+  ui.handle(event(requestId, "recording"));
+  assert.equal(el("recording-stop").disabled, false);
+  el("recording-stop").click();
+  const stop = sent.at(-1);
+  assert.equal(stop.type, "chan:extension-capture-request:v1");
+  assert.equal(stop.action, "stop");
+  assert.equal(stop.request_id, requestId);
+  el("recording-close").click();
+  assert.equal(el("recording-dialog").open, false);
+  assert.equal(sent.filter((m) => m.action === "cancel").length, 0);
+  ui.handle(event(requestId, "take", { take_id: TAKE_A, audio: new Blob(["audio"], { type: "audio/webm" }), mime: "audio/webm", started_at: 1704164645000 }));
+  await settle();
+  assert.equal(ui.takes().length, 1);
+  assert.equal(ui.takes()[0].take_id, TAKE_A);
+  assert.equal(ui.takes()[0].status, "saved");
+  const row = el("recording-takes").children.find((r) => r.dataset.takeId === TAKE_A);
+  assert.ok(row, "the take is rendered under its own take_id after the dialog closed");
+  assert.match(row.children[0].textContent, /mic\.webm/);
+  assert.ok(sent.some((m) => m.type === "chan:extension-capture-request:v1" && m.action === "ack" && m.take_id === TAKE_A));
+});
+
+test("cancel posts the cancel payload for the active request", async () => {
+  const { ui, el, sent } = await load(async () => { throw new Error("no fetch"); });
+  ui.handle(sources("available"));
+  el("recording-toggle").click();
+  const requestId = sent.at(-1).request_id;
+  ui.handle(event(requestId, "armed"));
+  assert.equal(el("recording-cancel").disabled, false);
+  el("recording-cancel").click();
+  const cancel = sent.at(-1);
+  assert.equal(cancel.type, "chan:extension-capture-request:v1");
+  assert.equal(cancel.action, "cancel");
+  assert.equal(cancel.request_id, requestId);
+  assert.equal(ui.activeRequestId(), null);
+});
+
 test("app.js does not cancel capture on pagehide", async () => {
   const { readFile } = await import("node:fs/promises");
   const app = await readFile(new URL("../../crates/strudel-extension/assets/app.js", import.meta.url), "utf8");
