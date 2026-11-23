@@ -41,16 +41,14 @@
         <aside id="panel" class="panel" aria-label="Menu panel"></aside>
       </div>
     </main>
-    <dialog id="recording-dialog" class="recording-dialog" aria-labelledby="recording-title" aria-describedby="recording-permission">
+    <dialog id="recording-dialog" class="recording-dialog" aria-labelledby="recording-title">
       <h2 id="recording-title">Record microphone</h2>
-      <p id="recording-permission">Your browser will ask for microphone permission. Choose Allow when prompted. Recording never starts until you click the button.</p>
-      <p class="muted">Takes are limited to 10 minutes or 64 MiB and saved as samples on the devserver.</p>
-      <p id="recording-status" role="status">Ready to record.</p>
-      <p id="recording-result" class="muted" hidden></p>
-      <pre id="recording-example" hidden></pre>
+      <p id="recording-status" role="status">Checking microphone availability.</p>
+      <div id="recording-takes"></div>
       <div class="row">
-        <button id="recording-toggle" type="button">record from microphone</button>
-        <button id="recording-open" type="button" disabled>show in file browser</button>
+        <button id="recording-toggle" type="button" disabled>record from microphone</button>
+        <button id="recording-stop" type="button" disabled>stop</button>
+        <button id="recording-cancel" type="button" disabled>cancel</button>
         <button id="recording-close" type="button">close</button>
       </div>
     </dialog>

@@ -1,8 +1,6 @@
-const HOST_SESSION = "chan:extension-session-context:v1";
-const HOST_MICROPHONE_REQUEST = "chan:extension-microphone-request:v1";
-const HOST_MICROPHONE_EVENT = "chan:extension-microphone-event:v1";
-const MAX_RECORDING_BYTES = 64 * 1024 * 1024;
-const MAX_RECORDING_SECONDS = 10 * 60;
+const CAPTURE_SOURCES = "chan:extension-capture-sources:v1";
+const CAPTURE_REQUEST = "chan:extension-capture-request:v1";
+const CAPTURE_EVENT = "chan:extension-capture-event:v1";
 
 function requestId() {
   const bytes = new Uint8Array(16);
@@ -10,195 +8,246 @@ function requestId() {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-function elapsed(seconds) {
-  const minutes = Math.floor(seconds / 60);
-  return `${minutes}:${String(seconds % 60).padStart(2, "0")}`;
-}
+const SOURCE_REASONS = {
+  not_granted: "Microphone is not granted for this extension.",
+  insecure_context: "Microphone requires a secure context.",
+  unsupported: "Microphone recording is not supported in this browser.",
+};
 
 export function createRecording(host) {
   const element = (id) => document.getElementById(id);
   const dialog = element("recording-dialog");
   const toggle = element("recording-toggle");
-  const open = element("recording-open");
+  const stopButton = element("recording-stop");
+  const cancelButton = element("recording-cancel");
   const close = element("recording-close");
   const status = element("recording-status");
-  const result = element("recording-result");
-  const example = element("recording-example");
-  let windowId = null;
-  let activeId = null;
-  let phase = "idle";
-  let startedAt = 0;
-  let timer = null;
+  const takesList = element("recording-takes");
 
-  function send(action) {
-    if (!activeId) return;
-    host.postMessage(
-      {
-        type: HOST_MICROPHONE_REQUEST,
-        request_id: activeId,
-        action,
-      },
-      "*",
-    );
+  let source = null;
+  let activeRequestId = null;
+  let hostState = "idle";
+  let hostError = "";
+  const takes = new Map();
+
+  function send(message) {
+    host.postMessage({ type: CAPTURE_REQUEST, ...message }, "*");
   }
 
-  function clearTimer() {
-    clearInterval(timer);
-    timer = null;
+  function ack(takeId) {
+    send({ action: "ack", take_id: takeId });
+  }
+
+  function sourceReason() {
+    if (source === null) return "Microphone unavailable: this Chan does not report capture sources. Update Chan to record.";
+    if (source === "available") return "";
+    return SOURCE_REASONS[source] || `Microphone unavailable: ${source}.`;
+  }
+
+  function hostStateText() {
+    if (hostState === "armed") return "Waiting for you to start recording in Chan.";
+    if (hostState === "starting") return "Starting recording in Chan.";
+    if (hostState === "recording") return "Recording in Chan. Use Stop in Chan or here to finish.";
+    if (hostState === "finishing") return "Finishing the recording in Chan.";
+    if (hostState === "error") return hostError ? `Recording failed: ${hostError}` : "Recording failed.";
+    if (hostState === "cancelled") return "Recording cancelled.";
+    return "";
   }
 
   function render() {
-    toggle.disabled = ["requesting", "saving"].includes(phase);
-    toggle.textContent = phase === "recording" ? "stop & save" : "record from microphone";
-    close.textContent = ["requesting", "recording"].includes(phase) ? "cancel" : "close";
-    open.disabled = !windowId;
-    if (phase === "recording") {
-      const seconds = Math.min(
-        MAX_RECORDING_SECONDS,
-        Math.max(0, Math.floor((Date.now() - startedAt) / 1000)),
-      );
-      status.textContent = `Recording ${elapsed(seconds)} / ${elapsed(MAX_RECORDING_SECONDS)}. Stop when you are ready to save.`;
+    const reason = sourceReason();
+    const stateText = hostStateText();
+    if (toggle) {
+      toggle.disabled = source !== "available" || activeRequestId !== null;
+      toggle.textContent = "record from microphone";
+    }
+    if (stopButton) stopButton.disabled = !(activeRequestId && ["armed", "starting", "recording", "finishing"].includes(hostState));
+    if (cancelButton) cancelButton.disabled = !activeRequestId;
+    if (status) {
+      if (reason) status.textContent = reason;
+      else if (stateText) status.textContent = stateText;
+      else if (takes.size) status.textContent = `${takes.size} recording${takes.size === 1 ? "" : "s"} waiting to save.`;
+      else status.textContent = "Ready to record. Chan will ask you to start the take.";
+    }
+    if (takesList) renderTakes();
+  }
+
+  function renderTakes() {
+    takesList.replaceChildren();
+    for (const take of takes.values()) {
+      const row = document.createElement("div");
+      row.className = "recording-take";
+      row.dataset.takeId = take.take_id;
+      const label = document.createElement("p");
+      if (take.status === "saved" && take.saved) {
+        label.textContent = `${take.saved.path} (${Math.round(take.saved.bytes / 1024)} KiB)`;
+      } else if (take.status === "uploading") {
+        label.textContent = `Take ${take.take_id.slice(0, 8)}: saving...`;
+      } else if (take.status === "failed") {
+        label.textContent = `Take ${take.take_id.slice(0, 8)}: could not save${take.error ? `: ${take.error}` : ""}.`;
+      } else {
+        label.textContent = `Take ${take.take_id.slice(0, 8)}: ready to save.`;
+      }
+      row.append(label);
+      if (take.status === "saved" && take.saved) {
+        const example = document.createElement("pre");
+        example.textContent = `samples({take: '${take.saved.url}'})\ns("take")`;
+        row.append(example);
+      }
+      const actions = document.createElement("div");
+      actions.className = "row";
+      if (take.status === "pending" || take.status === "failed") {
+        const save = document.createElement("button");
+        save.type = "button";
+        save.textContent = take.status === "failed" ? "retry" : "save";
+        save.dataset.action = "retry";
+        save.addEventListener("click", () => { upload(take.take_id).catch(() => {}); });
+        actions.append(save);
+      }
+      if (take.status !== "saved") {
+        const discard = document.createElement("button");
+        discard.type = "button";
+        discard.textContent = "discard";
+        discard.dataset.action = "discard";
+        discard.addEventListener("click", () => discardTake(take.take_id));
+        actions.append(discard);
+      }
+      row.append(actions);
+      takesList.append(row);
     }
   }
 
-  function resetResult() {
-    result.hidden = true;
-    result.textContent = "";
-    example.hidden = true;
-    example.textContent = "";
-  }
-
-  function begin() {
-    clearTimer();
-    resetResult();
-    activeId = requestId();
-    phase = "requesting";
-    status.textContent = "Requesting microphone access. Choose Allow when your browser asks.";
-    render();
-    send("start");
-  }
-
-  function cancel() {
-    if (["requesting", "recording"].includes(phase)) send("cancel");
-    clearTimer();
-    activeId = null;
-    phase = "idle";
-  }
-
-  function closeDialog() {
-    cancel();
-    dialog.close();
-  }
-
-  async function save(audio, limited) {
-    phase = "saving";
-    status.textContent = limited ? "Recording limit reached. Saving..." : "Saving recording...";
+  async function upload(takeId) {
+    const take = takes.get(takeId);
+    if (!take || take.status === "uploading" || take.status === "saved") return;
+    take.status = "uploading";
+    take.error = "";
     render();
     try {
-      const response = await fetch("recording", {
+      const mime = take.mime || take.audio?.type || "";
+      const url = `recording?take=${encodeURIComponent(take.take_id)}&started=${encodeURIComponent(String(take.started_at))}`;
+      const response = await fetch(url, {
         method: "POST",
-        headers: { "content-type": audio.type },
-        body: audio,
+        headers: mime ? { "content-type": mime } : {},
+        body: take.audio,
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const saved = await response.json();
-      phase = "saved";
-      status.textContent = "Recording saved.";
-      result.textContent = `${saved.path} (${Math.round(saved.bytes / 1024)} KiB)`;
-      result.hidden = false;
-      example.textContent = `samples({take: '${saved.url}'})\ns("take")`;
-      example.hidden = false;
+      const current = takes.get(takeId);
+      if (!current) return;
+      current.status = "saved";
+      current.saved = saved;
+      current.error = "";
+      ack(takeId);
     } catch (error) {
-      phase = "error";
-      status.textContent = `Could not save the recording: ${error.message}`;
+      const current = takes.get(takeId);
+      if (!current) return;
+      current.status = "failed";
+      current.error = error.message;
     }
-    activeId = null;
     render();
   }
 
-  async function openDirectory() {
-    if (!windowId) return;
-    open.disabled = true;
-    try {
-      const response = await fetch("recordings/open", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ window_id: windowId }),
-      });
-      if (!response.ok) {
-        const body = await response.json().catch(() => null);
-        throw new Error(body?.error || `HTTP ${response.status}`);
-      }
-    } catch (error) {
-      status.textContent = `Could not open the file browser: ${error.message}`;
-    } finally {
-      open.disabled = !windowId;
-    }
+  function discardTake(takeId) {
+    if (!takes.has(takeId)) return;
+    takes.delete(takeId);
+    ack(takeId);
+    render();
   }
 
-  toggle.addEventListener("click", () => {
-    if (phase === "recording") {
-      phase = "saving";
-      status.textContent = "Finishing the recording...";
-      send("stop");
-      render();
-    } else if (!["requesting", "saving"].includes(phase)) {
-      begin();
-    }
+  function begin() {
+    if (source !== "available" || activeRequestId) return;
+    activeRequestId = requestId();
+    hostState = "armed";
+    hostError = "";
+    send({ action: "open", request_id: activeRequestId, source: "microphone", processing: "raw" });
+    render();
+  }
+
+  function cancel() {
+    if (!activeRequestId) return;
+    send({ action: "cancel", request_id: activeRequestId });
+    activeRequestId = null;
+    hostState = "idle";
+    render();
+  }
+
+  toggle?.addEventListener("click", begin);
+  stopButton?.addEventListener("click", () => {
+    if (!activeRequestId) return;
+    hostState = "finishing";
+    send({ action: "stop", request_id: activeRequestId });
+    render();
   });
-  close.addEventListener("click", closeDialog);
-  open.addEventListener("click", openDirectory);
-  dialog.addEventListener("cancel", (event) => {
-    event.preventDefault();
-    closeDialog();
-  });
+  cancelButton?.addEventListener("click", cancel);
+  close?.addEventListener("click", () => dialog?.close());
+  dialog?.addEventListener("cancel", () => {});
+
+  render();
 
   return {
     show() {
-      if (phase !== "saving") {
-        phase = "idle";
-        status.textContent = "Your browser will ask for microphone permission. Choose Allow to start recording.";
-      }
       render();
-      dialog.showModal();
-      toggle.focus();
+      dialog?.showModal();
     },
     cancel,
     handle(message) {
       if (!message || typeof message !== "object") return;
-      if (message.type === HOST_SESSION && typeof message.self_id === "string") {
-        windowId = message.self_id;
+      if (message.type === CAPTURE_SOURCES) {
+        source = message.sources && typeof message.sources.microphone === "string" ? message.sources.microphone : null;
         render();
         return;
       }
-      if (message.type !== HOST_MICROPHONE_EVENT || message.request_id !== activeId) return;
-      if (message.state === "recording") {
-        phase = "recording";
-        startedAt = Date.now();
-        clearTimer();
-        timer = setInterval(render, 1000);
-        render();
-      } else if (message.state === "error") {
-        clearTimer();
-        activeId = null;
-        phase = "error";
-        status.textContent = `Recording failed: ${message.message || "unknown error"}`;
-        render();
-      } else if (message.state === "complete" && message.audio instanceof Blob) {
-        clearTimer();
-        if (message.audio.size === 0 || message.audio.size > MAX_RECORDING_BYTES) {
-          activeId = null;
-          phase = "error";
-          status.textContent = "Recording failed: the audio is empty or exceeds 64 MiB.";
-          render();
-          return;
+      if (message.type !== CAPTURE_EVENT) return;
+      if (message.state === "take") {
+        const takeId = message.take_id;
+        if (typeof takeId !== "string" || !(message.audio instanceof Blob)) return;
+        if (message.request_id && message.request_id === activeRequestId) {
+          activeRequestId = null;
+          hostState = "idle";
         }
-        save(message.audio, message.limited === true).catch((error) => {
-          phase = "error";
-          status.textContent = error.message;
+        if (!takes.has(takeId)) {
+          takes.set(takeId, {
+            take_id: takeId,
+            request_id: typeof message.request_id === "string" ? message.request_id : null,
+            audio: message.audio,
+            mime: typeof message.mime === "string" ? message.mime : message.audio.type || "",
+            bytes: typeof message.bytes === "number" ? message.bytes : message.audio.size,
+            duration_ms: typeof message.duration_ms === "number" ? message.duration_ms : null,
+            started_at: message.started_at,
+            end: message.end || null,
+            redelivered: message.redelivered === true,
+            status: "pending",
+            saved: null,
+            error: "",
+          });
           render();
-        });
+          if (!message.redelivered) upload(takeId).catch(() => {});
+        } else {
+          render();
+        }
+        return;
       }
+      if (typeof message.request_id === "string") {
+        if (activeRequestId && message.request_id !== activeRequestId) return;
+        if (!activeRequestId) activeRequestId = message.request_id;
+      }
+      if (message.state === "armed" || message.state === "starting" || message.state === "recording" || message.state === "finishing") {
+        hostState = message.state;
+      } else if (message.state === "cancelled") {
+        activeRequestId = null;
+        hostState = "cancelled";
+      } else if (message.state === "error") {
+        activeRequestId = null;
+        hostState = "error";
+        hostError = message.message || message.code || "unknown error";
+      } else {
+        return;
+      }
+      render();
     },
+    takes: () => [...takes.values()],
+    source: () => source,
+    activeRequestId: () => activeRequestId,
   };
 }

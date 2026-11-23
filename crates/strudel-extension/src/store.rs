@@ -70,11 +70,9 @@ impl Store {
                 format!("{stem}-{attempt}.{extension}")
             };
             let path = self.root.join(name);
-            if fs::symlink_metadata(&path).is_ok() {
-                continue;
+            if publish_noclobber(&path, bytes)? {
+                return Ok(path);
             }
-            atomic_bytes(&path, bytes)?;
-            return Ok(path);
         }
         bail!("Too many files named {stem}.{extension}.");
     }
@@ -105,6 +103,29 @@ pub(crate) fn atomic_json(path: &Path, value: &impl Serialize) -> Result<()> {
         bail!("Record exceeds the 1 MiB storage limit.");
     }
     atomic_bytes(path, &bytes)
+}
+
+/// Publish `bytes` at `path` without clobbering an existing file. Returns
+/// true when the file was created, false when `path` already exists.
+pub(crate) fn publish_noclobber(path: &Path, bytes: &[u8]) -> Result<bool> {
+    let parent = path.parent().context("record has no parent directory")?;
+    let mut file = tempfile::NamedTempFile::new_in(parent)?;
+    file.write_all(bytes)?;
+    file.as_file().sync_all()?;
+    match file.persist_noclobber(path) {
+        Ok(_) => {
+            #[cfg(unix)]
+            File::open(parent)?.sync_all()?;
+            Ok(true)
+        }
+        Err(error) => {
+            if error.error.kind() == std::io::ErrorKind::AlreadyExists {
+                Ok(false)
+            } else {
+                Err(error.error).with_context(|| format!("saving {}", path.display()))
+            }
+        }
+    }
 }
 
 pub(crate) fn atomic_bytes(path: &Path, bytes: &[u8]) -> Result<()> {
@@ -175,6 +196,36 @@ mod tests {
         assert_eq!(second.file_name().unwrap(), "take-2.wav");
         assert_eq!(fs::read(&first).unwrap(), b"one");
         assert_eq!(fs::read(&second).unwrap(), b"two");
+    }
+
+    #[test]
+    fn concurrent_unique_writes_never_collide() {
+        use std::collections::HashSet;
+        use std::sync::{Arc, Barrier};
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path().to_path_buf()).unwrap();
+        let barrier = Arc::new(Barrier::new(16));
+        let handles: Vec<_> = (0..16u8)
+            .map(|id| {
+                let store = store.clone();
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    let payload = vec![id; 4096];
+                    barrier.wait();
+                    store
+                        .write_unique("microphone-1234", "webm", &payload)
+                        .unwrap()
+                })
+            })
+            .collect();
+        let paths: Vec<PathBuf> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+        let unique: HashSet<&PathBuf> = paths.iter().collect();
+        assert_eq!(unique.len(), 16, "every write must land in its own file");
+        for (index, path) in paths.iter().enumerate() {
+            assert_eq!(fs::read(path).unwrap(), vec![index as u8; 4096]);
+        }
+        let on_disk = fs::read_dir(dir.path()).unwrap().count();
+        assert_eq!(on_disk, 16);
     }
 
     #[cfg(unix)]

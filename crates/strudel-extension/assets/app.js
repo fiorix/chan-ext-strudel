@@ -609,7 +609,6 @@ for (const type of ["keyup", "input", "paste", "cut"]) {
   document.addEventListener(type, scheduleSave);
 }
 window.addEventListener("pagehide", () => {
-  recording.cancel();
   flush();
 });
 document.addEventListener("visibilitychange", () => {

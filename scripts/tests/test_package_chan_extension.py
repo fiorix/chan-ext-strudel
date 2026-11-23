@@ -119,7 +119,7 @@ class PackageChanExtensionTests(unittest.TestCase):
         self.assertEqual(set(parsed), {"name", "command", "args", "capabilities"})
         self.assertEqual(parsed["name"], "Strudel")
         self.assertEqual(
-            parsed["capabilities"], ["presentation", "session-context", "microphone"]
+            parsed["capabilities"], ["presentation", "microphone"]
         )
 
     def test_a_stale_source_tarball_is_refused(self) -> None:

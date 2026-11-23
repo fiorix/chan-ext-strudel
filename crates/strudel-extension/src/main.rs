@@ -1,7 +1,6 @@
 //! Strudel's REPL in a Chan tab: the embedded UI, the pinned Strudel inputs,
 //! per-session patterns and settings, WAV exports, and microphone samples.
 
-mod control;
 mod store;
 
 use std::collections::{BTreeMap, HashSet};
@@ -26,8 +25,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use tokio::net::TcpListener;
 
-use control::Cs;
-use store::Store;
+use store::{Store, publish_noclobber};
 
 const SCOPE_HEADER: &str = "x-chan-extension-scope";
 const STATE_FILE: &str = "state.json";
@@ -70,7 +68,6 @@ struct AppState {
     token: String,
     store: Store,
     samples: PathBuf,
-    cs: Option<Cs>,
     meta: Value,
 }
 
@@ -227,18 +224,10 @@ async fn main() -> Result<()> {
     if let Err(error) = std::fs::create_dir_all(&samples) {
         eprintln!("strudel: creating {}: {error}", samples.display());
     }
-    let cs = match Cs::locate() {
-        Ok(cs) => Some(cs),
-        Err(error) => {
-            eprintln!("strudel: {error:#}");
-            None
-        }
-    };
     let state = Arc::new(AppState {
         token: token.clone(),
         store,
         samples,
-        cs,
         meta,
     });
     let app = router(state);
@@ -268,7 +257,6 @@ fn router(state: Arc<AppState>) -> Router {
             "/recording",
             post(record_microphone).layer(DefaultBodyLimit::max(MAX_RECORDING_BYTES)),
         )
-        .route("/recordings/open", post(open_recordings))
         .with_state(state)
 }
 
@@ -509,105 +497,150 @@ async fn export_wav(
     ))
 }
 
-fn recording_extension(headers: &HeaderMap, body: &[u8]) -> Option<&'static str> {
-    let media_type = headers
-        .get(header::CONTENT_TYPE)?
-        .to_str()
-        .ok()?
-        .split(';')
-        .next()?
-        .trim()
-        .to_ascii_lowercase();
-    match media_type.as_str() {
-        "audio/webm" if body.starts_with(b"\x1a\x45\xdf\xa3") => Some("webm"),
-        "audio/ogg" if body.starts_with(b"OggS") => Some("ogg"),
-        "audio/mp4" | "audio/x-m4a" if body.len() >= 12 && &body[4..8] == b"ftyp" => Some("m4a"),
+fn container_from_signature(body: &[u8]) -> Option<&'static str> {
+    if body.starts_with(b"\x1a\x45\xdf\xa3") {
+        Some("webm")
+    } else if body.starts_with(b"OggS") {
+        Some("ogg")
+    } else if body.len() >= 12 && &body[4..8] == b"ftyp" {
+        Some("m4a")
+    } else {
+        None
+    }
+}
+
+fn container_from_media_type(media_type: &str) -> Option<&'static str> {
+    match media_type {
+        "audio/webm" | "video/webm" => Some("webm"),
+        "audio/ogg" | "video/ogg" | "application/ogg" | "audio/opus" => Some("ogg"),
+        "audio/mp4" | "audio/x-m4a" | "audio/m4a" | "video/mp4" | "audio/aac" => Some("m4a"),
         _ => None,
     }
+}
+
+fn is_generic_media_type(media_type: &str) -> bool {
+    matches!(
+        media_type,
+        "" | "application/octet-stream" | "application/binary" | "binary/octet-stream"
+    )
+}
+
+fn recording_extension(headers: &HeaderMap, body: &[u8]) -> Option<&'static str> {
+    let extension = container_from_signature(body)?;
+    let Some(raw) = headers.get(header::CONTENT_TYPE) else {
+        return Some(extension);
+    };
+    let Ok(value) = raw.to_str() else {
+        return None;
+    };
+    let media_type = value.split(';').next()?.trim().to_ascii_lowercase();
+    if is_generic_media_type(&media_type) {
+        return Some(extension);
+    }
+    match container_from_media_type(&media_type) {
+        Some(named) if named == extension => Some(extension),
+        Some(_) => None,
+        None => None,
+    }
+}
+
+fn valid_take_id(take: &str) -> bool {
+    take.len() == 32
+        && take
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+fn format_utc(epoch_ms: u64) -> String {
+    let secs = epoch_ms / 1000;
+    let days = (secs / 86_400) as i64;
+    let day_secs = secs % 86_400;
+    let (hour, minute, second) = (day_secs / 3600, (day_secs % 3600) / 60, day_secs % 60);
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = if month <= 2 { y + 1 } else { y };
+    format!("{year:04}{month:02}{day:02}-{hour:02}{minute:02}{second:02}")
+}
+
+#[derive(Deserialize)]
+struct RecordingQuery {
+    #[serde(default)]
+    t: String,
+    #[serde(default)]
+    take: Option<String>,
+    #[serde(default)]
+    started: Option<String>,
+}
+
+enum RecordingPublish {
+    Created(PathBuf),
+    Existing(PathBuf),
+    Conflict,
 }
 
 /// Store one client-side microphone recording where patterns can load it.
 async fn record_microphone(
     State(state): State<Arc<AppState>>,
-    Query(auth): Query<AuthQuery>,
+    Query(query): Query<RecordingQuery>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Json<Value>, StatusCode> {
-    check_auth(&state, &auth)?;
+    check_auth(&state, &AuthQuery { t: query.t.clone() })?;
     header_value(&headers, SCOPE_HEADER)?;
+    let take = query.take.as_deref().ok_or(StatusCode::BAD_REQUEST)?;
+    if !valid_take_id(take) {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let started_raw = query.started.as_deref().ok_or(StatusCode::BAD_REQUEST)?;
+    let started: u64 = started_raw
+        .parse()
+        .ok()
+        .filter(|value: &u64| *value > 0)
+        .ok_or(StatusCode::BAD_REQUEST)?;
     let extension = recording_extension(&headers, &body).ok_or(StatusCode::BAD_REQUEST)?;
     let bytes = body.len();
     let directory = state.samples.join(RECORDINGS_DIR);
-    let stem = format!("microphone-{}", now());
-    let path = tokio::task::spawn_blocking(move || {
-        Store::new(directory)?.write_unique(&stem, extension, &body)
-    })
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-    .map_err(internal)?;
+    let file_name = format!("mic-{}-{}.{extension}", format_utc(started), &take[..8]);
+    let body_vec = body.to_vec();
+    let publish =
+        tokio::task::spawn_blocking(move || -> Result<RecordingPublish, anyhow::Error> {
+            Store::new(directory.clone())?;
+            let dest = directory.join(&file_name);
+            if publish_noclobber(&dest, &body_vec)? {
+                Ok(RecordingPublish::Created(dest))
+            } else {
+                let metadata = std::fs::metadata(&dest)?;
+                if metadata.len() == body_vec.len() as u64 {
+                    Ok(RecordingPublish::Existing(dest))
+                } else {
+                    Ok(RecordingPublish::Conflict)
+                }
+            }
+        })
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .map_err(internal)?;
+    let path = match publish {
+        RecordingPublish::Created(path) | RecordingPublish::Existing(path) => path,
+        RecordingPublish::Conflict => return Err(StatusCode::CONFLICT),
+    };
     let name = path
         .file_name()
         .and_then(|name| name.to_str())
-        .expect("a generated recording name is UTF-8");
+        .expect("a generated recording name is UTF-8")
+        .to_string();
     Ok(Json(json!({
         "path": path.display().to_string(),
         "url": format!("samples/{RECORDINGS_DIR}/{name}"),
         "bytes": bytes,
     })))
-}
-
-#[derive(Deserialize)]
-struct OpenRecordings {
-    window_id: String,
-}
-
-fn api_error(status: StatusCode, message: impl Into<String>) -> (StatusCode, Json<Value>) {
-    (status, Json(json!({"error": message.into()})))
-}
-
-async fn open_recordings(
-    State(state): State<Arc<AppState>>,
-    Query(auth): Query<AuthQuery>,
-    headers: HeaderMap,
-    Json(request): Json<OpenRecordings>,
-) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    check_auth(&state, &auth)
-        .map_err(|status| api_error(status, "The extension token is missing or invalid."))?;
-    header_value(&headers, SCOPE_HEADER)
-        .map_err(|status| api_error(status, "The extension scope is missing or invalid."))?;
-    if !valid_id(&request.window_id) {
-        return Err(api_error(
-            StatusCode::BAD_REQUEST,
-            "Invalid Chan window id.",
-        ));
-    }
-    let directory = state.samples.join(RECORDINGS_DIR);
-    let stored = directory.clone();
-    tokio::task::spawn_blocking(move || Store::new(stored).map(|_| ()))
-        .await
-        .map_err(|_| {
-            api_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Could not create the recordings directory.",
-            )
-        })?
-        .map_err(|error| {
-            eprintln!("strudel: {error:#}");
-            api_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Could not create the recordings directory.",
-            )
-        })?;
-    let cs = state.cs.as_ref().ok_or_else(|| {
-        api_error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "The cs client is unavailable on the devserver.",
-        )
-    })?;
-    cs.open(&request.window_id, &directory)
-        .await
-        .map_err(|error| api_error(StatusCode::BAD_GATEWAY, format!("{error:#}")))?;
-    Ok(Json(json!({"path": directory.display().to_string()})))
 }
 
 /// The media type served for a sample file name, or `None` to refuse it.
@@ -712,7 +745,6 @@ mod tests {
             token: "secret".into(),
             store: Store::new(dir.path().to_path_buf()).unwrap(),
             samples: dir.path().join(SAMPLES_DIR),
-            cs: None,
             meta: json!({}),
         });
         (dir, state)
@@ -1014,6 +1046,19 @@ mod tests {
         headers
     }
 
+    fn recording_query(take: &str, started: &str) -> Query<RecordingQuery> {
+        Query(RecordingQuery {
+            t: "secret".into(),
+            take: Some(take.into()),
+            started: Some(started.into()),
+        })
+    }
+
+    const TAKE_A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const TAKE_B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    // 2024-01-02T03:04:05Z in epoch milliseconds.
+    const STARTED_A: &str = "1704164645000";
+
     #[test]
     fn recording_formats_match_their_container_signatures() {
         assert_eq!(
@@ -1044,30 +1089,59 @@ mod tests {
         }
     }
 
+    #[test]
+    fn recording_accepts_missing_or_generic_type_and_rejects_mismatched_container() {
+        let webm = b"\x1a\x45\xdf\xa3webm";
+        let mut no_type = scoped("a");
+        no_type.remove(header::CONTENT_TYPE);
+        assert_eq!(recording_extension(&no_type, webm), Some("webm"));
+        assert_eq!(
+            recording_extension(&recording_headers("application/octet-stream"), webm),
+            Some("webm")
+        );
+        assert_eq!(
+            recording_extension(&recording_headers("audio/ogg"), webm),
+            None
+        );
+        assert_eq!(
+            recording_extension(&recording_headers("audio/webm"), b"OggSdata"),
+            None
+        );
+        assert_eq!(format_utc(1704164645000), "20240102-030405");
+        assert_eq!(format_utc(0), "19700101-000000");
+        assert!(valid_take_id(TAKE_A));
+        assert!(!valid_take_id("ABCDEF0123456789abcdef0123456789"));
+        assert!(!valid_take_id("short"));
+    }
+
     #[tokio::test]
-    async fn recordings_are_unique_and_readable_as_samples() {
+    async fn same_take_twice_is_one_file_and_two_successes() {
         let (dir, state) = test_state();
         let audio = Bytes::from_static(b"\x1a\x45\xdf\xa3webm");
         let save = |body: Bytes| {
             record_microphone(
                 State(Arc::clone(&state)),
-                auth(),
+                recording_query(TAKE_A, STARTED_A),
                 recording_headers("audio/webm; codecs=opus"),
                 body,
             )
         };
         let first = save(audio.clone()).await.unwrap().0;
         let second = save(audio.clone()).await.unwrap().0;
+        assert_eq!(first, second);
         let first_path = PathBuf::from(first["path"].as_str().unwrap());
-        let second_path = PathBuf::from(second["path"].as_str().unwrap());
-        assert_eq!(first_path.parent(), second_path.parent());
         assert_eq!(
-            first_path.parent().unwrap(),
-            dir.path().join(SAMPLES_DIR).join(RECORDINGS_DIR)
+            first_path,
+            dir.path()
+                .join(SAMPLES_DIR)
+                .join(RECORDINGS_DIR)
+                .join("mic-20240102-030405-aaaaaaaa.webm")
         );
-        assert_ne!(first_path, second_path);
         assert_eq!(std::fs::read(&first_path).unwrap(), audio.as_ref());
-        assert_ne!(first["url"].as_str(), second["url"].as_str());
+        let count = std::fs::read_dir(first_path.parent().unwrap())
+            .unwrap()
+            .count();
+        assert_eq!(count, 1);
         let name = first_path.file_name().unwrap().to_str().unwrap();
         let response = sample(
             State(Arc::clone(&state)),
@@ -1078,6 +1152,47 @@ mod tests {
         .unwrap();
         assert_eq!(response.headers()[header::CONTENT_TYPE], "audio/webm");
         assert_eq!(body_bytes(response).await.as_ref(), audio.as_ref());
+        // A different take at the same instant is a second file.
+        let other = record_microphone(
+            State(Arc::clone(&state)),
+            recording_query(TAKE_B, STARTED_A),
+            recording_headers("audio/webm"),
+            audio.clone(),
+        )
+        .await
+        .unwrap()
+        .0;
+        assert_ne!(other["path"], first["path"]);
+        let count = std::fs::read_dir(first_path.parent().unwrap())
+            .unwrap()
+            .count();
+        assert_eq!(count, 2);
+    }
+
+    #[tokio::test]
+    async fn same_take_with_different_length_is_conflict() {
+        let (_dir, state) = test_state();
+        let first = Bytes::from_static(b"\x1a\x45\xdf\xa3webm");
+        let _ = record_microphone(
+            State(Arc::clone(&state)),
+            recording_query(TAKE_A, STARTED_A),
+            recording_headers("audio/webm"),
+            first,
+        )
+        .await
+        .unwrap();
+        let longer = Bytes::from_static(b"\x1a\x45\xdf\xa3webm-extra");
+        assert_eq!(
+            record_microphone(
+                State(state),
+                recording_query(TAKE_A, STARTED_A),
+                recording_headers("audio/webm"),
+                longer,
+            )
+            .await
+            .unwrap_err(),
+            StatusCode::CONFLICT
+        );
     }
 
     #[tokio::test]
@@ -1087,7 +1202,11 @@ mod tests {
         assert_eq!(
             record_microphone(
                 State(Arc::clone(&state)),
-                Query(AuthQuery { t: "wrong".into() }),
+                Query(RecordingQuery {
+                    t: "wrong".into(),
+                    take: Some(TAKE_A.into()),
+                    started: Some(STARTED_A.into()),
+                }),
                 recording_headers("audio/webm"),
                 audio.clone(),
             )
@@ -1098,15 +1217,43 @@ mod tests {
         let mut without_scope = recording_headers("audio/webm");
         without_scope.remove(SCOPE_HEADER);
         assert_eq!(
-            record_microphone(State(Arc::clone(&state)), auth(), without_scope, audio,)
-                .await
-                .unwrap_err(),
+            record_microphone(
+                State(Arc::clone(&state)),
+                recording_query(TAKE_A, STARTED_A),
+                without_scope,
+                audio.clone(),
+            )
+            .await
+            .unwrap_err(),
             StatusCode::FORBIDDEN
         );
+        for (take, started) in [
+            (None, Some(STARTED_A)),
+            (Some("not-a-take"), Some(STARTED_A)),
+            (Some(TAKE_A), None),
+            (Some(TAKE_A), Some("0")),
+            (Some(TAKE_A), Some("not-a-number")),
+        ] {
+            assert_eq!(
+                record_microphone(
+                    State(Arc::clone(&state)),
+                    Query(RecordingQuery {
+                        t: "secret".into(),
+                        take: take.map(str::to_string),
+                        started: started.map(str::to_string),
+                    }),
+                    recording_headers("audio/webm"),
+                    audio.clone(),
+                )
+                .await
+                .unwrap_err(),
+                StatusCode::BAD_REQUEST
+            );
+        }
         assert_eq!(
             record_microphone(
-                State(state),
-                auth(),
+                State(Arc::clone(&state)),
+                recording_query(TAKE_A, STARTED_A),
                 recording_headers("audio/webm"),
                 Bytes::from_static(b"not audio"),
             )
@@ -1114,33 +1261,17 @@ mod tests {
             .unwrap_err(),
             StatusCode::BAD_REQUEST
         );
-    }
-
-    #[tokio::test]
-    async fn opening_recordings_validates_the_window_and_reports_missing_cs() {
-        let (_dir, state) = test_state();
-        let invalid = open_recordings(
-            State(Arc::clone(&state)),
-            auth(),
-            scoped("a"),
-            Json(OpenRecordings {
-                window_id: "../x".into(),
-            }),
-        )
-        .await
-        .unwrap_err();
-        assert_eq!(invalid.0, StatusCode::BAD_REQUEST);
-        let unavailable = open_recordings(
-            State(state),
-            auth(),
-            scoped("a"),
-            Json(OpenRecordings {
-                window_id: "window-a".into(),
-            }),
-        )
-        .await
-        .unwrap_err();
-        assert_eq!(unavailable.0, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(
+            record_microphone(
+                State(state),
+                recording_query(TAKE_A, STARTED_A),
+                recording_headers("audio/ogg"),
+                audio.clone(),
+            )
+            .await
+            .unwrap_err(),
+            StatusCode::BAD_REQUEST
+        );
     }
 
     #[test]

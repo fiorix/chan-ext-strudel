@@ -6,7 +6,7 @@ This file records notable development history and design decisions. Reference do
 
 ### Unreleased
 
-Add microphone recording through Chan's parent window. A new opt-in `microphone` capability and versioned host bridge keep the extension iframe opaque: Chan owns permission, `MediaRecorder`, limits, and track cleanup, while Strudel receives only the completed audio. Takes save atomically under `samples/recordings/` in their native WebM, Ogg, or M4A format, load through the existing local-sample route, and open in Chan's file browser through `cs`. The extension also declares `session-context` so that action targets the originating window.
+Add microphone recording through Chan's parent window. The `microphone` capability and the capture bridge keep the extension iframe opaque: Chan reports which sources are available, shows its own capture bar, and owns permission, `MediaRecorder`, limits, and track cleanup, while Strudel receives only completed takes keyed by a host-minted id. Strudel holds each take until its save is acknowledged, offers retry and discard after a failed save, and accepts takes Chan redelivers after a frame reload. Takes save under `samples/recordings/` with a name derived from the take id and its start time, so a retry writes the same file, in their native WebM, Ogg, or M4A format, and load through the existing local-sample route. The extension declares only `presentation` and `microphone`.
 
 ## 2026-10-18
 

@@ -488,8 +488,12 @@ summary::-webkit-details-marker {
 #recording-status {
   min-height: 22px;
 }
-#recording-example {
+.recording-take {
+  margin: 10px 0;
+}
+.recording-take pre {
   user-select: text;
+  margin-top: 6px;
 }
 @media (max-width: 720px) {
   #app[data-panel="right"] .panel {

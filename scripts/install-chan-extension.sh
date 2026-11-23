@@ -25,7 +25,7 @@ toml_command=${binary_path//\\/\\\\}
 toml_command=${toml_command//\"/\\\"}
 config_tmp=$(mktemp "$config_path.tmp.XXXXXX")
 trap 'rm -f -- "$config_tmp"' EXIT
-printf 'name = "Strudel"\ncommand = "%s"\nargs = []\ncapabilities = ["presentation", "session-context", "microphone"]\n' \
+printf 'name = "Strudel"\ncommand = "%s"\nargs = []\ncapabilities = ["presentation", "microphone"]\n' \
     "$toml_command" >"$config_tmp"
 chmod 0644 "$config_tmp"
 mv -f -- "$config_tmp" "$config_path"

@@ -23,6 +23,12 @@ A change to Chan's keyboard relay in `assets/app.js` also runs its focused test,
 node --test scripts/tests/keyboard-relay.test.mjs
 ```
 
+A change to the microphone capture in `assets/recording.js` also runs its focused test, which executes the module as shipped against a fake DOM and host:
+
+```sh
+node --test scripts/tests/recording.test.mjs
+```
+
 The release tooling has its own checks. `install-release.sh` packages the committed tree, so it needs at least one commit:
 
 ```sh
@@ -44,7 +50,7 @@ Install the checkout into a running Chan and restart it:
 chan devserver --restart
 ```
 
-Open **Strudel** from the launcher's Apps category. Click once, press Ctrl+Enter on the default pattern, and hear it. With the editor focused, press a Chan chord such as the launcher's and confirm Chan handles it. Edit the pattern, wait a second, reload the tab, and confirm the edit came back; the record is at `~/.chan/strudel/<hex>/state.json`. In the panel: create, duplicate, and delete a pattern; hold a sound in **sounds** and hear it; search **reference** and click an example into the editor; render two cycles in **export** and find the file under `~/.chan/strudel/exports/`; watch **console** while evaluating; put a WAV under `~/.chan/strudel/samples/`, load it with `samples({x: 'name.wav'}, 'samples/')`, and hear `s("x")`; switch the theme and panel position in **settings** and reload to see them kept. Run **Toggle Strudel Presentation** from the launcher, then Restore. On a Chan build with the microphone capability, open **Record**, check the permission instructions, allow access, record and save a take, then load the displayed sample URL and hear it; cancel another take and confirm the microphone is released, and check **show in file browser**. In the frame's browser console, `window.isSecureContext` must be true and no `SecurityError` may appear.
+Open **Strudel** from the launcher's Apps category. Click once, press Ctrl+Enter on the default pattern, and hear it. With the editor focused, press a Chan chord such as the launcher's and confirm Chan handles it. Edit the pattern, wait a second, reload the tab, and confirm the edit came back; the record is at `~/.chan/strudel/<hex>/state.json`. In the panel: create, duplicate, and delete a pattern; hold a sound in **sounds** and hear it; search **reference** and click an example into the editor; render two cycles in **export** and find the file under `~/.chan/strudel/exports/`; watch **console** while evaluating; put a WAV under `~/.chan/strudel/samples/`, load it with `samples({x: 'name.wav'}, 'samples/')`, and hear `s("x")`; switch the theme and panel position in **settings** and reload to see them kept. Run **Toggle Strudel Presentation** from the launcher, then Restore. On a Chan build with the microphone capability, open **Record**, confirm it is enabled only when Chan reports the microphone as available, ask Chan to show its capture bar, start and stop a take from that bar, save it from the overlay, then load the displayed sample URL and hear it; cancel another take from the capture bar and confirm the microphone is released. In the frame's browser console, `window.isSecureContext` must be true and no `SecurityError` may appear.
 
 Finally, open the tab from a phone or a second machine through the gateway, tap once, evaluate, and reload. A local browser check does not establish gateway authentication or the touch unlock on the user's device.
 

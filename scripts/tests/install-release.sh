@@ -64,7 +64,7 @@ run_install() {
     compgen -G "$install_root/source/chan-ext-strudel-*.tar.gz" >/dev/null
     compgen -G "$install_root/source/npm/*.tgz" >/dev/null
     grep -Fq 'name = "Strudel"' "$chan_home/extensions/strudel.toml"
-    grep -Fq 'capabilities = ["presentation"]' "$chan_home/extensions/strudel.toml"
+    grep -Fq 'capabilities = ["presentation", "microphone"]' "$chan_home/extensions/strudel.toml"
 }
 
 run_install linux-x86_64 Linux x86_64 strudel-extension

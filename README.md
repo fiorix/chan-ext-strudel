@@ -36,9 +36,9 @@ The panel beside the editor carries the strudel.cc tabs. **Patterns** keeps one 
 
 ## Microphone recordings
 
-**Record** opens an overlay for recording the microphone of the browser or desktop client viewing Strudel. Click **record from microphone**, then choose **Allow** when the browser asks for permission. **stop & save** writes the take; closing or cancelling an active take discards it and releases the microphone. A take is limited to 10 minutes or 64 MiB and keeps the browser's native WebM, Ogg, or M4A format.
+**Record** opens an overlay for recording the microphone of the browser or desktop client viewing Strudel. The button is enabled only when Chan reports the microphone as available, and it shows the reason when it is not; a Chan that does not report capture sources is treated as unavailable. Clicking it asks Chan to show its capture bar, where the viewer starts and stops the take, and Chan owns the device, the recorder, and the limits. The overlay shows Chan's state and, for each finished take, saves it to the devserver or offers retry and discard until the save succeeds; a take is kept until its save is acknowledged or the viewer discards it. Reloading the tab does not cancel a take held by Chan, and a take Chan redelivers after a reload is offered for save in the overlay. Takes keep the browser's native WebM, Ogg, or M4A format.
 
-Recordings are shared across sessions under `~/.chan/strudel/samples/recordings/` (`$CHAN_HOME/strudel/samples/recordings/` when `CHAN_HOME` is set). The overlay shows the saved path and a pattern example. **show in file browser** runs `cs open` on that directory in the originating Chan window. Recording requires a Chan build with the `microphone` extension capability; older Chan versions reject the extension declaration. Chan's parent window performs the capture, so the Strudel iframe keeps its opaque-origin sandbox.
+Recordings are shared across sessions under `~/.chan/strudel/samples/recordings/` (`$CHAN_HOME/strudel/samples/recordings/` when `CHAN_HOME` is set). The overlay shows the saved path and a pattern example for each saved take. Recording requires a Chan build with the `microphone` extension capability; older Chan versions reject the extension declaration. Chan's parent window performs the capture, so the Strudel iframe keeps its opaque-origin sandbox.
 
 ## Local samples
 

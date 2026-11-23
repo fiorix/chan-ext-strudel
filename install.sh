@@ -283,7 +283,7 @@ config_tmp=$(mktemp "$config_dir/.strudel.toml.XXXXXX")
     printf 'name = "Strudel"\n'
     printf 'command = "%s"\n' "$toml_command"
     printf 'args = []\n'
-    printf 'capabilities = ["presentation"]\n'
+    printf 'capabilities = ["presentation", "microphone"]\n'
 } >"$config_tmp"
 chmod 0644 "$config_tmp"
 mv -f -- "$config_tmp" "$config_path"
